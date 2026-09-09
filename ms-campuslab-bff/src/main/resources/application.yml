@@ -22,3 +22,6 @@ cors:
 
 catalog:
   service-url: ${CATALOG_SERVICE_URL}
+
+bookings:
+  service-url: ${BOOKINGS_SERVICE_URL}

@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AuthCallbackPage } from './routes/AuthCallbackPage'
+import { BookingsPage } from './routes/BookingsPage'
 import { CatalogPage } from './routes/CatalogPage'
 import { DashboardPage } from './routes/DashboardPage'
 import { LoginPage } from './routes/LoginPage'
@@ -27,6 +28,14 @@ function App() {
           element={
             <ProtectedRoute>
               <CatalogPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/bookings"
+          element={
+            <ProtectedRoute>
+              <BookingsPage />
             </ProtectedRoute>
           }
         />
