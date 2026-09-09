@@ -1,0 +1,132 @@
+{
+  "realm": "campuslab",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "ADMIN", "description": "Administra el catalogo de labs/equipos y ve KPIs de ocupacion." },
+      { "name": "TECNICO", "description": "Aprueba reservas, prepara la sala y registra devoluciones." },
+      { "name": "ESTUDIANTE", "description": "Solicita y sigue sus propias reservas." },
+      { "name": "AUDITOR", "description": "Consulta el timeline. Solo lectura." }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "roles",
+      "description": "Maps realm and client roles into the token (built-in scope, redefined explicitly because a full realm import does not auto-create Keycloak's default scopes)",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "foo",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "campuslab-api-audience",
+      "description": "Adds campuslab-api as a token audience",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "campuslab-api-audience-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "campuslab-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "campuslab-spa",
+      "name": "CampusLab SPA",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:5173"],
+      "defaultClientScopes": ["roles", "campuslab-api-audience"]
+    },
+    {
+      "clientId": "campuslab-api",
+      "name": "CampusLab API audience",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    }
+  ],
+  "users": [
+    {
+      "username": "admin.test",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin.test@campuslab.local",
+      "firstName": "Admin",
+      "lastName": "Test",
+      "credentials": [{ "type": "password", "value": "Campuslab#2026", "temporary": false }],
+      "realmRoles": ["ADMIN"]
+    },
+    {
+      "username": "tecnico.test",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "tecnico.test@campuslab.local",
+      "firstName": "Tecnico",
+      "lastName": "Test",
+      "credentials": [{ "type": "password", "value": "Campuslab#2026", "temporary": false }],
+      "realmRoles": ["TECNICO"]
+    },
+    {
+      "username": "estudiante.test",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "estudiante.test@campuslab.local",
+      "firstName": "Estudiante",
+      "lastName": "Test",
+      "credentials": [{ "type": "password", "value": "Campuslab#2026", "temporary": false }],
+      "realmRoles": ["ESTUDIANTE"]
+    },
+    {
+      "username": "auditor.test",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "auditor.test@campuslab.local",
+      "firstName": "Auditor",
+      "lastName": "Test",
+      "credentials": [{ "type": "password", "value": "Campuslab#2026", "temporary": false }],
+      "realmRoles": ["AUDITOR"]
+    }
+  ]
+}

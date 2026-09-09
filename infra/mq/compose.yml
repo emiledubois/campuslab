@@ -1,0 +1,57 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4.3.5-management
+    profiles: ["local"]
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq-1:
+    image: rabbitmq:4.3.5-management
+    profiles: ["deploy"]
+    hostname: rabbitmq-1
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
+      RABBITMQ_NODENAME: rabbit@rabbitmq-1
+    volumes:
+      - ./rabbitmq-cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
+      - ./enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    # Management UI is intentionally NOT published to the host in the deploy
+    # profile - management UIs must never be publicly reachable in deployment.
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq-2:
+    image: rabbitmq:4.3.5-management
+    profiles: ["deploy"]
+    hostname: rabbitmq-2
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
+      RABBITMQ_NODENAME: rabbit@rabbitmq-2
+    volumes:
+      - ./rabbitmq-cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
+      - ./enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    depends_on:
+      rabbitmq-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

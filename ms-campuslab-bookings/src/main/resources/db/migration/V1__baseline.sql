@@ -1,0 +1,1 @@
+-- Intentionally empty Flyway baseline; feature migrations start at V2.

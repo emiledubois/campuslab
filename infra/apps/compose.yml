@@ -1,0 +1,188 @@
+services:
+  # --- Postgres, one container and one database per persisting service ---
+  bookings-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${BOOKINGS_DB_NAME}
+      POSTGRES_USER: ${BOOKINGS_DB_USER}
+      POSTGRES_PASSWORD: ${BOOKINGS_DB_PASSWORD}
+    volumes:
+      - bookings-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${BOOKINGS_DB_USER} -d ${BOOKINGS_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  catalog-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${CATALOG_DB_NAME}
+      POSTGRES_USER: ${CATALOG_DB_USER}
+      POSTGRES_PASSWORD: ${CATALOG_DB_PASSWORD}
+    volumes:
+      - catalog-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CATALOG_DB_USER} -d ${CATALOG_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  report-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${REPORT_DB_NAME}
+      POSTGRES_USER: ${REPORT_DB_USER}
+      POSTGRES_PASSWORD: ${REPORT_DB_PASSWORD}
+    volumes:
+      - report-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${REPORT_DB_USER} -d ${REPORT_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  audit-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${AUDIT_DB_NAME}
+      POSTGRES_USER: ${AUDIT_DB_USER}
+      POSTGRES_PASSWORD: ${AUDIT_DB_PASSWORD}
+    volumes:
+      - audit-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUDIT_DB_USER} -d ${AUDIT_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- Spring Boot services. Only the BFF is published to the host - it is the
+  # only public entry point per CLAUDE.md's non-negotiable call path. Every other
+  # service is reachable only from other containers on this compose network. ---
+  bff:
+    build:
+      context: ../../ms-campuslab-bff
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  bookings:
+    build:
+      context: ../../ms-campuslab-bookings
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8080
+      DB_URL: jdbc:postgresql://bookings-db:5432/${BOOKINGS_DB_NAME}
+      DB_USERNAME: ${BOOKINGS_DB_USER}
+      DB_PASSWORD: ${BOOKINGS_DB_PASSWORD}
+    depends_on:
+      bookings-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  catalog:
+    build:
+      context: ../../ms-campuslab-catalog
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8080
+      DB_URL: jdbc:postgresql://catalog-db:5432/${CATALOG_DB_NAME}
+      DB_USERNAME: ${CATALOG_DB_USER}
+      DB_PASSWORD: ${CATALOG_DB_PASSWORD}
+    depends_on:
+      catalog-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  notify:
+    build:
+      context: ../../ms-campuslab-notify
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8080
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  report:
+    build:
+      context: ../../ms-campuslab-report
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8080
+      DB_URL: jdbc:postgresql://report-db:5432/${REPORT_DB_NAME}
+      DB_USERNAME: ${REPORT_DB_USER}
+      DB_PASSWORD: ${REPORT_DB_PASSWORD}
+    depends_on:
+      report-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  audit:
+    build:
+      context: ../../ms-campuslab-audit
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8080
+      DB_URL: jdbc:postgresql://audit-db:5432/${AUDIT_DB_NAME}
+      DB_USERNAME: ${AUDIT_DB_USER}
+      DB_PASSWORD: ${AUDIT_DB_PASSWORD}
+    depends_on:
+      audit-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mq-admin:
+    build:
+      context: ../../ms-campuslab-mq-admin
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8080
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka-admin:
+    build:
+      context: ../../ms-campuslab-kafka-admin
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8080
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  bookings-db-data:
+  catalog-db-data:
+  report-db-data:
+  audit-db-data:
