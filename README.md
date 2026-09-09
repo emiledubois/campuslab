@@ -115,9 +115,25 @@ Cada paso fue efectivamente levantado y verificado durante el scaffolding (no so
 
 ```bash
 cd ms-campuslab-catalog
-SERVER_PORT=8080 DB_URL=jdbc:postgresql://localhost:5432/catalog DB_USERNAME=catalog DB_PASSWORD=catalog ./mvnw spring-boot:run
+SERVER_PORT=8080 DB_URL=jdbc:postgresql://localhost:5432/catalog DB_USERNAME=catalog DB_PASSWORD=catalog \
+  OIDC_ISSUER_URI=http://localhost:8081/realms/campuslab OIDC_AUDIENCE=campuslab-api \
+  OIDC_ROLES_CLAIM=realm_access.roles ./mvnw spring-boot:run
 ```
-(Los servicios sin persistencia — bff, notify, mq-admin, kafka-admin — solo necesitan `SERVER_PORT`, ninguna variable de base de datos.)
+(Los servicios sin persistencia — bff, notify, mq-admin, kafka-admin — solo necesitan `SERVER_PORT`, ninguna variable de base de datos. Desde la slice 2, `ms-campuslab-catalog` tambien valida su propio JWT — ver "defensa en profundidad" en `docs/designs/catalog.md` — asi que necesita las mismas tres variables `OIDC_*` que la BFF.)
+
+**Nota (slice 2, catalogo):** si se corre `ms-campuslab-bff` directo en el host (no via `infra/apps/compose.yml`) y se quiere que llegue a un `ms-campuslab-catalog` tambien corriendo en el host, `catalog` no es un hostname resoluble fuera de la red de compose — hay que apuntar `CATALOG_SERVICE_URL` a `http://localhost:<puerto>` con catalog arrancado en un puerto distinto al 8080 de la BFF, por ejemplo:
+```bash
+# terminal 1
+cd ms-campuslab-catalog
+SERVER_PORT=8082 DB_URL=jdbc:postgresql://localhost:5432/catalog DB_USERNAME=catalog DB_PASSWORD=catalog \
+  OIDC_ISSUER_URI=... OIDC_AUDIENCE=campuslab-api OIDC_ROLES_CLAIM=realm_access.roles ./mvnw spring-boot:run
+
+# terminal 2
+cd ms-campuslab-bff
+CATALOG_SERVICE_URL=http://localhost:8082 OIDC_ISSUER_URI=... OIDC_AUDIENCE=campuslab-api \
+  OIDC_ROLES_CLAIM=realm_access.roles CORS_ALLOWED_ORIGINS=http://localhost:5173 ./mvnw spring-boot:run
+```
+Bajo `infra/apps/compose.yml` no hace falta nada de esto: `CATALOG_SERVICE_URL` ya viene fijado ahi a `http://catalog:8080` (el hostname interno de compose), igual que `DB_URL` para los servicios con base de datos.
 
 ## Verificacion de cada pieza (hecha durante el scaffolding, no solo documentada)
 

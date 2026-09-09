@@ -1,6 +1,6 @@
 spring:
   application:
-    name: ms-campuslab-bff
+    name: ms-campuslab-catalog
 management:
   endpoints:
     web:
@@ -14,9 +14,3 @@ oidc:
   issuer-uri: https://issuer.example.test/realms/campuslab
   audience: campuslab-api
   roles-claim: realm_access.roles
-
-cors:
-  allowed-origins: http://localhost:5173
-
-catalog:
-  service-url: http://catalog.example.test

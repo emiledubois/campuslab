@@ -1,45 +1,9 @@
-import { useEffect, useState } from 'react'
-import { apiFetch } from '../api/httpClient'
+import { useMe } from '../hooks/useMe'
 import { useAuth } from '../auth/useAuth'
-
-interface MeResponse {
-  sub: string
-  username: string
-  email: string
-  roles: string[]
-  issuer: string
-}
 
 export function DashboardPage() {
   const { logout } = useAuth()
-  const [me, setMe] = useState<MeResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-
-    apiFetch('/api/me')
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`GET /api/me failed with status ${response.status}`)
-        }
-        return (await response.json()) as MeResponse
-      })
-      .then((data) => {
-        if (!cancelled) {
-          setMe(data)
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'No se pudo cargar la identidad.')
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const { me, error } = useMe()
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-8">
