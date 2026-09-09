@@ -21,3 +21,9 @@ coverage/
 
 # Docker volumes materialized locally (if any bind-mounts are used for dev)
 infra/**/data/
+
+# Local-only project/AI-workflow material — never part of the submitted repo
+/.claude/
+/CLAUDE.md
+/BOOTSTRAP_PROMPT.md
+/docs/
