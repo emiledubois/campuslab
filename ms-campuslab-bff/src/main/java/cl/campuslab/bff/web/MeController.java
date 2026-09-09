@@ -1,0 +1,34 @@
+package cl.campuslab.bff.web;
+
+import cl.campuslab.bff.web.dto.MeResponse;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * No role restriction - every authenticated role needs to know who it is, and the
+ * identity returned is always derived from the caller's own token, so there is no
+ * ownership check to make here (there is no path/body id a caller could manipulate).
+ */
+@RestController
+public class MeController {
+
+    @GetMapping("/api/me")
+    public MeResponse me(JwtAuthenticationToken authentication) {
+        Jwt jwt = authentication.getToken();
+        String username = firstClaim(jwt, "preferred_username", "email", "name");
+        String email = firstClaim(jwt, "email", "preferred_username", "name");
+        return new MeResponse(jwt.getSubject(), username, email, AuthenticatedPrincipal.roles(authentication), jwt.getIssuer().toString());
+    }
+
+    private static String firstClaim(Jwt jwt, String... claimNames) {
+        for (String claimName : claimNames) {
+            String value = jwt.getClaimAsString(claimName);
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return jwt.getSubject();
+    }
+}

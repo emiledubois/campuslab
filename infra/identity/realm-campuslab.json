@@ -3,6 +3,7 @@
   "enabled": true,
   "sslRequired": "none",
   "registrationAllowed": false,
+  "accessTokenLifespan": 30,
   "roles": {
     "realm": [
       { "name": "ADMIN", "description": "Administra el catalogo de labs/equipos y ve KPIs de ocupacion." },
@@ -12,6 +13,89 @@
     ]
   },
   "clientScopes": [
+    {
+      "name": "basic",
+      "description": "Injects 'sub' into the access token (built-in scope, redefined explicitly for the same reason 'roles' below is: a full realm import does not auto-create Keycloak's default scopes). Without this, GET /api/me has no subject to return.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "profile",
+      "description": "Adds preferred_username/name (built-in scope, redefined explicitly for the same reason 'roles' below is)",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "username",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "full name",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-full-name-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "description": "Adds email (built-in scope, redefined explicitly for the same reason 'roles' below is)",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "email",
+            "claim.name": "email",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
     {
       "name": "roles",
       "description": "Maps realm and client roles into the token (built-in scope, redefined explicitly because a full realm import does not auto-create Keycloak's default scopes)",
@@ -73,7 +157,7 @@
       "serviceAccountsEnabled": false,
       "redirectUris": ["http://localhost:5173/*"],
       "webOrigins": ["http://localhost:5173"],
-      "defaultClientScopes": ["roles", "campuslab-api-audience"]
+      "defaultClientScopes": ["basic", "profile", "email", "roles", "campuslab-api-audience"]
     },
     {
       "clientId": "campuslab-api",
