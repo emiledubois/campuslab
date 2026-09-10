@@ -24,3 +24,6 @@ catalog:
 
 bookings:
   service-url: ${BOOKINGS_SERVICE_URL}
+
+mq-admin:
+  service-url: ${MQ_ADMIN_SERVICE_URL}

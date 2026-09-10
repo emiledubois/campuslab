@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: ms-campuslab-notify
+  rabbitmq:
+    listener:
+      simple:
+        default-requeue-rejected: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+notify:
+  dedup:
+    max-size: 10000
+    expire-after-write-hours: 24

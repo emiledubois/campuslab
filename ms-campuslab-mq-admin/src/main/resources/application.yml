@@ -1,6 +1,12 @@
 spring:
   application:
     name: ms-campuslab-mq-admin
+  rabbitmq:
+    host: ${RABBITMQ_HOST}
+    port: ${RABBITMQ_PORT}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
+    connection-timeout: 2000
 server:
   port: ${SERVER_PORT:8080}
 management:
@@ -11,3 +17,10 @@ management:
   endpoint:
     health:
       show-details: never
+
+oidc:
+  issuer-uri: ${OIDC_ISSUER_URI}
+  audience: ${OIDC_AUDIENCE}
+
+mq-admin:
+  dlq-sample-rate-ms: 30000

@@ -1,3 +1,10 @@
+networks:
+  # Shared with infra/apps/compose.yml (§7 A05) so mq-admin/notify/bookings there can
+  # resolve `rabbitmq` by hostname - see the matching comment in that file. Created once,
+  # out-of-band, via `docker network create campuslab-net` (see README.md).
+  campuslab-net:
+    external: true
+
 services:
   rabbitmq:
     image: rabbitmq:4.3.5-management
@@ -9,6 +16,8 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    networks:
+      - campuslab-net
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -27,6 +36,8 @@ services:
     volumes:
       - ./rabbitmq-cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
       - ./enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    networks:
+      - campuslab-net
     # Management UI is intentionally NOT published to the host in the deploy
     # profile - management UIs must never be publicly reachable in deployment.
     healthcheck:
@@ -50,6 +61,8 @@ services:
     depends_on:
       rabbitmq-1:
         condition: service_healthy
+    networks:
+      - campuslab-net
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s

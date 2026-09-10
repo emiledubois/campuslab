@@ -57,6 +57,11 @@ El camino de llamada es siempre: navegador → API Gateway → `ms-campuslab-bff
 ## Requisitos previos
 
 - **Java 21** y **Docker + Docker Compose** (probado con Docker 29.7 / Compose v5).
+- **Red compartida de Docker (una sola vez)**: `infra/apps/compose.yml` e `infra/mq/compose.yml` se levantan como dos invocaciones independientes de `docker compose -f`, cada una en su propia red por defecto — sin una red compartida, `mq-admin`/`notify`/`bookings` (en `apps`) no podrian resolver `rabbitmq` (en `mq`) por nombre de host (slice 5, `docs/designs/messaging-notify.md` §7 A05). Antes del primer `docker compose up` de cualquiera de los dos archivos:
+  ```bash
+  docker network create campuslab-net
+  ```
+  Se crea una sola vez por maquina/host; no la crea ningun `docker compose up` — si se corre `docker compose down` en un archivo, la red sigue en pie para el otro.
 - **Node.js** para el frontend. *Nota:* en esta maquina el `node` del sistema esta roto (falta `libada.so.3`, aparentemente por una actualizacion parcial de paquetes de Arch). Se instalo Node LTS de forma aislada via `nvm` en `~/.nvm` (sin tocar paquetes del sistema); para usarlo:
   ```bash
   source ~/.nvm/nvm.sh

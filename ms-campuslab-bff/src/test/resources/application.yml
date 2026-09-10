@@ -22,3 +22,6 @@ catalog:
 
 bookings:
   service-url: http://bookings.example.test
+
+mq-admin:
+  service-url: http://mq-admin.example.test

@@ -1,6 +1,16 @@
 spring:
   application:
     name: ms-campuslab-bookings
+  rabbitmq:
+    # Same RFC 5737 TEST-NET-1 reserved-address pattern as catalog.service-url below -
+    # a fast, deterministic connection failure (AC13's "RabbitMQ unreachable" case) for
+    # every test that doesn't override this with a real Testcontainers broker, rather than
+    # a hang against a real localhost:5672 that may or may not exist in a given CI/dev box.
+    host: 192.0.2.1
+    port: 65535
+    username: guest
+    password: guest
+    connection-timeout: 300
 management:
   endpoints:
     web:
@@ -9,6 +19,9 @@ management:
   endpoint:
     health:
       show-details: never
+  health:
+    rabbit:
+      enabled: false
 
 oidc:
   issuer-uri: https://login.microsoftonline.com/test-tenant/v2.0

@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: ms-campuslab-mq-admin
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+oidc:
+  issuer-uri: https://login.microsoftonline.com/test-tenant/v2.0
+  audience: api://test-audience
+
+mq-admin:
+  dlq-sample-rate-ms: 30000

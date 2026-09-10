@@ -6,6 +6,8 @@ import cl.campuslab.bookings.domain.Booking;
 import cl.campuslab.bookings.domain.BookingRepository;
 import cl.campuslab.bookings.domain.BookingSpecifications;
 import cl.campuslab.bookings.domain.BookingStatus;
+import cl.campuslab.bookings.messaging.BookingEventPublisher;
+import cl.campuslab.bookings.messaging.NotificationType;
 import cl.campuslab.bookings.web.dto.BookingResponse;
 import cl.campuslab.bookings.web.dto.CreateBookingRequest;
 import java.time.Instant;
@@ -48,10 +50,13 @@ public class BookingService {
 
     private final BookingRepository repository;
     private final CatalogStockClient catalogStockClient;
+    private final BookingEventPublisher eventPublisher;
 
-    public BookingService(BookingRepository repository, CatalogStockClient catalogStockClient) {
+    public BookingService(
+            BookingRepository repository, CatalogStockClient catalogStockClient, BookingEventPublisher eventPublisher) {
         this.repository = repository;
         this.catalogStockClient = catalogStockClient;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -138,7 +143,23 @@ public class BookingService {
 
         log.info("Booking action=[STATUS_CHANGE] oid=[{}] roles=[{}] id=[{}] fromStatus=[{}] toStatus=[{}]",
                 displayOidOf(authentication), rolesOf(authentication), saved.getId(), fromStatus, saved.getStatus());
+        publishTransitionNotifications(fromStatus, saved.getStatus(), saved);
         return BookingResponse.from(saved);
+    }
+
+    /**
+     * Publish hooks fire strictly AFTER the successful commit above, for exactly the two
+     * transitions the case document names an email trigger for outside of approval
+     * (messaging-notify.md §2.2's table) - {@code CANCELADA} and any transition not in
+     * this table publish nothing.
+     */
+    private void publishTransitionNotifications(BookingStatus fromStatus, BookingStatus toStatus, Booking saved) {
+        String traceId = UUID.randomUUID().toString();
+        if (fromStatus == BookingStatus.EN_PREPARACION && toStatus == BookingStatus.EN_USO) {
+            eventPublisher.publish(NotificationType.EMAIL_ROOM_READY, saved, fromStatus, toStatus, traceId);
+        } else if (fromStatus == BookingStatus.EN_USO && toStatus == BookingStatus.DEVUELTA) {
+            eventPublisher.publish(NotificationType.EMAIL_RETURNED, saved, fromStatus, toStatus, traceId);
+        }
     }
 
     /**
@@ -168,6 +189,12 @@ public class BookingService {
             Booking saved = repository.saveAndFlush(booking);
             log.info("Booking action=[STATUS_CHANGE] oid=[{}] roles=[{}] id=[{}] fromStatus=[{}] toStatus=[{}]",
                     displayOidOf(authentication), rolesOf(authentication), saved.getId(), BookingStatus.SOLICITADA, saved.getStatus());
+            // messaging-notify.md §2.2's table: SOLICITADA->APROBADA fires both the
+            // student-facing approval email and the tecnico-facing prep ticket, sharing one
+            // traceId (only this edge ever publishes two messages for the same request).
+            String traceId = UUID.randomUUID().toString();
+            eventPublisher.publish(NotificationType.EMAIL_APPROVED, saved, BookingStatus.SOLICITADA, BookingStatus.APROBADA, traceId);
+            eventPublisher.publish(NotificationType.PREP_TICKET_REQUESTED, saved, BookingStatus.SOLICITADA, BookingStatus.APROBADA, traceId);
             return BookingResponse.from(saved);
         } catch (ObjectOptimisticLockingFailureException ex) {
             // Revision 1 (design doc §3 step 2): the local write can lose for two different

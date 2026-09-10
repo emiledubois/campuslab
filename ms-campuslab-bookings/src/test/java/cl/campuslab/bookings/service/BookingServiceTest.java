@@ -8,12 +8,15 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import cl.campuslab.bookings.catalog.CatalogDecrementOutcome;
 import cl.campuslab.bookings.catalog.CatalogStockClient;
 import cl.campuslab.bookings.domain.Booking;
 import cl.campuslab.bookings.domain.BookingRepository;
 import cl.campuslab.bookings.domain.BookingStatus;
+import cl.campuslab.bookings.messaging.BookingEventPublisher;
+import cl.campuslab.bookings.messaging.NotificationType;
 import cl.campuslab.bookings.web.dto.BookingResponse;
 import cl.campuslab.bookings.web.dto.CreateBookingRequest;
 import java.lang.reflect.Field;
@@ -40,11 +43,14 @@ class BookingServiceTest {
     @Mock
     private CatalogStockClient catalogStockClient;
 
+    @Mock
+    private BookingEventPublisher eventPublisher;
+
     private BookingService service;
 
     @BeforeEach
     void setUp() {
-        service = new BookingService(repository, catalogStockClient);
+        service = new BookingService(repository, catalogStockClient, eventPublisher);
     }
 
     @Test
@@ -159,6 +165,78 @@ class BookingServiceTest {
     }
 
     @Test
+    void updateStatus_approvingSolicitada_publishesBothEmailApprovedAndPrepTicketRequested() {
+        // messaging-notify.md §2.2's table/§9 AC8: SOLICITADA->APROBADA fires exactly
+        // this pair, never anything else, and only after the local commit succeeds.
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.SUCCESS);
+        given(repository.saveAndFlush(booking)).willReturn(booking);
+
+        service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO"));
+
+        verify(eventPublisher).publish(
+                eq(NotificationType.EMAIL_APPROVED), eq(booking), eq(BookingStatus.SOLICITADA), eq(BookingStatus.APROBADA), any());
+        verify(eventPublisher).publish(
+                eq(NotificationType.PREP_TICKET_REQUESTED), eq(booking), eq(BookingStatus.SOLICITADA), eq(BookingStatus.APROBADA), any());
+    }
+
+    @Test
+    void updateStatus_enPreparacionToEnUso_publishesOnlyEmailRoomReady() {
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.EN_PREPARACION));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(repository.saveAndFlush(booking)).willReturn(booking);
+
+        service.updateStatus(id, BookingStatus.EN_USO, staffAuthentication("tecnico-oid", "TECNICO"));
+
+        verify(eventPublisher).publish(
+                eq(NotificationType.EMAIL_ROOM_READY), eq(booking), eq(BookingStatus.EN_PREPARACION), eq(BookingStatus.EN_USO), any());
+        verify(eventPublisher, times(1)).publish(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void updateStatus_enUsoToDevuelta_publishesOnlyEmailReturned() {
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.EN_USO));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(repository.saveAndFlush(booking)).willReturn(booking);
+
+        service.updateStatus(id, BookingStatus.DEVUELTA, staffAuthentication("tecnico-oid", "TECNICO"));
+
+        verify(eventPublisher).publish(
+                eq(NotificationType.EMAIL_RETURNED), eq(booking), eq(BookingStatus.EN_USO), eq(BookingStatus.DEVUELTA), any());
+        verify(eventPublisher, times(1)).publish(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void updateStatus_approbadaToEnPreparacion_publishesNothing() {
+        // Not one of the three named triggers (design doc §2.2's table, "aprobación, sala
+        // lista, devolución") - the prep ticket already fired at approval time.
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.APROBADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(repository.saveAndFlush(booking)).willReturn(booking);
+
+        service.updateStatus(id, BookingStatus.EN_PREPARACION, staffAuthentication("tecnico-oid", "TECNICO"));
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void updateStatus_cancellingFromSolicitada_publishesNothing() {
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(repository.saveAndFlush(booking)).willReturn(booking);
+
+        service.updateStatus(id, BookingStatus.CANCELADA, estudianteAuthentication("estudiante-oid"));
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
     void updateStatus_tecnicoWithNoOidClaim_stillSucceeds() {
         // Staff have no ownership dimension - a missing oid must not block a legitimate
         // status change (only ESTUDIANTE's ownership path is strict about oid).
@@ -242,6 +320,10 @@ class BookingServiceTest {
         assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
                 .isInstanceOf(ObjectOptimisticLockingFailureException.class);
         verify(catalogStockClient, never()).increment(any(), any(), any());
+        // The losing request in a concurrent-approval race never reaches the publish
+        // hook (design doc §2.2's table, last row / §9 AC15) - only the winner's own
+        // saveAndFlush succeeds and gets to publish.
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -264,6 +346,7 @@ class BookingServiceTest {
         assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
                 .isInstanceOf(ObjectOptimisticLockingFailureException.class);
         verify(catalogStockClient, times(1)).increment(eq(resourceId), eq(id), any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
