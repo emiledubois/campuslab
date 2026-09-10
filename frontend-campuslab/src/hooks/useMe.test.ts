@@ -13,11 +13,12 @@ describe('useMe', () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            sub: 'admin-uuid',
+            sub: 'admin-sub',
+            oid: 'admin-oid',
             username: 'admin.test',
             email: 'admin.test@campuslab.local',
             roles: ['ADMIN'],
-            issuer: 'http://localhost:8081/realms/campuslab',
+            issuer: 'https://login.microsoftonline.com/test-tenant/v2.0',
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),

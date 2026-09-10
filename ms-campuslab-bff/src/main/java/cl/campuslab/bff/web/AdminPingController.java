@@ -23,8 +23,16 @@ public class AdminPingController {
     @GetMapping("/api/admin/ping")
     public AdminPingResponse ping(JwtAuthenticationToken authentication) {
         List<String> roles = AuthenticatedPrincipal.roles(authentication);
-        log.info("Admin ping accessed: sub=[{}] roles=[{}] path=[/api/admin/ping] timestamp=[{}]",
-                authentication.getToken().getSubject(), roles, Instant.now());
-        return new AdminPingResponse("admin-only", authentication.getToken().getSubject(), roles);
+        String oid = oidOf(authentication);
+        log.info("Admin ping accessed: oid=[{}] roles=[{}] path=[/api/admin/ping] timestamp=[{}]",
+                oid, roles, Instant.now());
+        return new AdminPingResponse("admin-only", oid, roles);
+    }
+
+    /** Diagnostic/display only (see docs/designs/entra-migration.md §3) - falls back to
+     * {@code sub} defensively, unlike bookings' ownership-key extraction. */
+    private static String oidOf(JwtAuthenticationToken authentication) {
+        String oid = authentication.getToken().getClaimAsString("oid");
+        return (oid != null && !oid.isBlank()) ? oid : authentication.getToken().getSubject();
     }
 }

@@ -55,12 +55,12 @@ public class BookingService {
             throw new InvalidBookingWindowException("requestedEnd must be strictly after requestedStart");
         }
 
-        String studentSub = subjectOf(authentication);
+        String studentOid = ownerOidOf(authentication);
         Booking entity = new Booking(
-                request.resourceId(), studentSub, request.requestedStart(), request.requestedEnd(), request.notes());
+                request.resourceId(), studentOid, request.requestedStart(), request.requestedEnd(), request.notes());
         Booking saved = repository.save(entity);
 
-        log.info("Booking action=[CREATE] sub=[{}] roles=[{}] id=[{}]", studentSub, rolesOf(authentication), saved.getId());
+        log.info("Booking action=[CREATE] oid=[{}] roles=[{}] id=[{}]", studentOid, rolesOf(authentication), saved.getId());
         return BookingResponse.from(saved);
     }
 
@@ -68,7 +68,7 @@ public class BookingService {
     public BookingResponse get(UUID id, JwtAuthenticationToken authentication) {
         Booking booking = repository.findById(id).orElseThrow(() -> new BookingNotFoundException(id));
 
-        if (isEstudiante(authentication) && !booking.getStudentSub().equals(subjectOf(authentication))) {
+        if (isEstudiante(authentication) && !booking.getStudentOid().equals(ownerOidOf(authentication))) {
             throw new BookingNotFoundException(id);
         }
 
@@ -80,7 +80,7 @@ public class BookingService {
         Specification<Booking> spec = Specification.where(null);
 
         if (isEstudiante(authentication)) {
-            spec = spec.and(BookingSpecifications.hasStudentSub(subjectOf(authentication)));
+            spec = spec.and(BookingSpecifications.hasStudentOid(ownerOidOf(authentication)));
         }
         if (status != null) {
             spec = spec.and(BookingSpecifications.hasStatus(status));
@@ -99,9 +99,8 @@ public class BookingService {
     public BookingResponse updateStatus(UUID id, BookingStatus targetStatus, JwtAuthenticationToken authentication) {
         Booking booking = repository.findById(id).orElseThrow(() -> new BookingNotFoundException(id));
         boolean isEstudiante = isEstudiante(authentication);
-        String sub = subjectOf(authentication);
 
-        if (isEstudiante && !booking.getStudentSub().equals(sub)) {
+        if (isEstudiante && !booking.getStudentOid().equals(ownerOidOf(authentication))) {
             throw new BookingNotFoundException(id);
         }
         if (isEstudiante && targetStatus != BookingStatus.CANCELADA) {
@@ -118,8 +117,8 @@ public class BookingService {
         // both having read the same version and racing to update it (see design doc §3/AC19).
         Booking saved = repository.saveAndFlush(booking);
 
-        log.info("Booking action=[STATUS_CHANGE] sub=[{}] roles=[{}] id=[{}] fromStatus=[{}] toStatus=[{}]",
-                sub, rolesOf(authentication), saved.getId(), fromStatus, saved.getStatus());
+        log.info("Booking action=[STATUS_CHANGE] oid=[{}] roles=[{}] id=[{}] fromStatus=[{}] toStatus=[{}]",
+                displayOidOf(authentication), rolesOf(authentication), saved.getId(), fromStatus, saved.getStatus());
         return BookingResponse.from(saved);
     }
 
@@ -139,8 +138,28 @@ public class BookingService {
                 .anyMatch(authority -> authority.getAuthority().equals("ROLE_" + role));
     }
 
-    private static String subjectOf(JwtAuthenticationToken authentication) {
-        return authentication.getToken().getSubject();
+    /**
+     * Strict ownership-key extraction (Entra {@code oid}, not {@code sub}) - deliberately
+     * has NO fallback to {@code sub} (unlike display-only fields elsewhere): a token
+     * missing {@code oid} is treated as malformed/wrong-kind and rejected (401), never
+     * silently degraded to a different, unstable ownership scope. See
+     * docs/designs/entra-migration.md §4/§7 A01.
+     */
+    private static String ownerOidOf(JwtAuthenticationToken authentication) {
+        String oid = authentication.getToken().getClaimAsString("oid");
+        if (oid == null || oid.isBlank()) {
+            throw new MissingOwnerOidException();
+        }
+        return oid;
+    }
+
+    /** Display/logging only (cross-service correlation) - unlike {@link #ownerOidOf},
+     * this may fall back to {@code sub} since staff (TECNICO/ADMIN) callers have no
+     * ownership dimension and a missing {@code oid} on their token must not block an
+     * otherwise-legitimate status change. */
+    private static String displayOidOf(JwtAuthenticationToken authentication) {
+        String oid = authentication.getToken().getClaimAsString("oid");
+        return (oid != null && !oid.isBlank()) ? oid : authentication.getToken().getSubject();
     }
 
     private static List<String> rolesOf(JwtAuthenticationToken authentication) {

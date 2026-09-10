@@ -39,16 +39,16 @@ class BookingServiceTest {
     }
 
     @Test
-    void create_withValidRequest_setsServerAssignedStudentSubAndStatus() {
+    void create_withValidRequest_setsServerAssignedStudentOidAndStatus() {
         Instant start = Instant.parse("2026-09-15T10:00:00Z");
         Instant end = Instant.parse("2026-09-15T12:00:00Z");
         CreateBookingRequest request = new CreateBookingRequest(UUID.randomUUID(), start, end, "notes");
-        Booking saved = withId(new Booking(request.resourceId(), "estudiante-uuid", start, end, "notes"));
+        Booking saved = withId(new Booking(request.resourceId(), "estudiante-oid", start, end, "notes"));
         given(repository.save(any(Booking.class))).willReturn(saved);
 
-        BookingResponse response = service.create(request, estudianteAuthentication("estudiante-uuid"));
+        BookingResponse response = service.create(request, estudianteAuthentication("estudiante-oid"));
 
-        assertThat(response.studentSub()).isEqualTo("estudiante-uuid");
+        assertThat(response.studentOid()).isEqualTo("estudiante-oid");
         assertThat(response.status()).isEqualTo(BookingStatus.SOLICITADA);
     }
 
@@ -57,40 +57,63 @@ class BookingServiceTest {
         Instant start = Instant.parse("2026-09-15T10:00:00Z");
         CreateBookingRequest request = new CreateBookingRequest(UUID.randomUUID(), start, start, "notes");
 
-        assertThatThrownBy(() -> service.create(request, estudianteAuthentication("estudiante-uuid")))
+        assertThatThrownBy(() -> service.create(request, estudianteAuthentication("estudiante-oid")))
                 .isInstanceOf(InvalidBookingWindowException.class);
+    }
+
+    @Test
+    void create_withMissingOidClaim_throwsMissingOwnerOidNeverFallingBackToSub() {
+        Instant start = Instant.parse("2026-09-15T10:00:00Z");
+        Instant end = Instant.parse("2026-09-15T12:00:00Z");
+        CreateBookingRequest request = new CreateBookingRequest(UUID.randomUUID(), start, end, "notes");
+
+        assertThatThrownBy(() -> service.create(request, estudianteAuthenticationWithNoOid("estudiante-sub")))
+                .isInstanceOf(MissingOwnerOidException.class);
     }
 
     @Test
     void get_ownedByCaller_returnsBooking() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("estudiante-uuid", BookingStatus.SOLICITADA));
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
 
-        BookingResponse response = service.get(id, estudianteAuthentication("estudiante-uuid"));
+        BookingResponse response = service.get(id, estudianteAuthentication("estudiante-oid"));
 
-        assertThat(response.studentSub()).isEqualTo("estudiante-uuid");
+        assertThat(response.studentOid()).isEqualTo("estudiante-oid");
     }
 
     @Test
     void get_ownedByAnotherStudent_throwsNotFoundMasking() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("other-student-uuid", BookingStatus.SOLICITADA));
+        Booking booking = withId(bookingOf("other-student-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
 
-        assertThatThrownBy(() -> service.get(id, estudianteAuthentication("estudiante-uuid")))
+        assertThatThrownBy(() -> service.get(id, estudianteAuthentication("estudiante-oid")))
                 .isInstanceOf(BookingNotFoundException.class);
+    }
+
+    @Test
+    void get_callerSubEqualsOwnersOid_isNotTreatedAsOwner() {
+        // Deliberately confusing fixture (design doc §9 AC11): the intruder's *sub* equals
+        // the real owner's *oid* - proves the ownership check reads oid, not sub, under a
+        // different variable name.
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("owner-oid-value", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        JwtAuthenticationToken intruder = jwtAuthentication("owner-oid-value", "intruder-different-oid", "ESTUDIANTE");
+
+        assertThatThrownBy(() -> service.get(id, intruder)).isInstanceOf(BookingNotFoundException.class);
     }
 
     @Test
     void get_asTecnico_returnsAnyBookingRegardlessOfOwner() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("some-student-uuid", BookingStatus.SOLICITADA));
+        Booking booking = withId(bookingOf("some-student-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
 
-        BookingResponse response = service.get(id, staffAuthentication("tecnico-uuid", "TECNICO"));
+        BookingResponse response = service.get(id, staffAuthentication("tecnico-oid", "TECNICO"));
 
-        assertThat(response.studentSub()).isEqualTo("some-student-uuid");
+        assertThat(response.studentOid()).isEqualTo("some-student-oid");
     }
 
     @Test
@@ -98,51 +121,86 @@ class BookingServiceTest {
         UUID id = UUID.randomUUID();
         given(repository.findById(id)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.get(id, staffAuthentication("tecnico-uuid", "TECNICO")))
+        assertThatThrownBy(() -> service.get(id, staffAuthentication("tecnico-oid", "TECNICO")))
                 .isInstanceOf(BookingNotFoundException.class);
+    }
+
+    @Test
+    void get_estudianteWithMissingOidClaim_throwsMissingOwnerOid() {
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+
+        assertThatThrownBy(() -> service.get(id, estudianteAuthenticationWithNoOid("estudiante-sub")))
+                .isInstanceOf(MissingOwnerOidException.class);
     }
 
     @Test
     void updateStatus_tecnicoApprovingSolicitada_returnsApproved() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("estudiante-uuid", BookingStatus.SOLICITADA));
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
         given(repository.saveAndFlush(booking)).willReturn(booking);
 
-        BookingResponse response = service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-uuid", "TECNICO"));
+        BookingResponse response = service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO"));
 
         assertThat(response.status()).isEqualTo(BookingStatus.APROBADA);
         verify(repository).saveAndFlush(booking);
     }
 
     @Test
+    void updateStatus_tecnicoWithNoOidClaim_stillSucceeds() {
+        // Staff have no ownership dimension - a missing oid must not block a legitimate
+        // status change (only ESTUDIANTE's ownership path is strict about oid).
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(repository.saveAndFlush(booking)).willReturn(booking);
+        JwtAuthenticationToken tecnicoWithNoOid = staffAuthenticationWithNoOid("tecnico-sub", "TECNICO");
+
+        BookingResponse response = service.updateStatus(id, BookingStatus.APROBADA, tecnicoWithNoOid);
+
+        assertThat(response.status()).isEqualTo(BookingStatus.APROBADA);
+    }
+
+    @Test
     void updateStatus_calledByAnotherStudent_throwsNotFoundMasking() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("owner-uuid", BookingStatus.SOLICITADA));
+        Booking booking = withId(bookingOf("owner-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
 
-        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.CANCELADA, estudianteAuthentication("intruder-uuid")))
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.CANCELADA, estudianteAuthentication("intruder-oid")))
                 .isInstanceOf(BookingNotFoundException.class);
+    }
+
+    @Test
+    void updateStatus_estudianteWithMissingOidClaim_throwsMissingOwnerOid() {
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.CANCELADA, estudianteAuthenticationWithNoOid("estudiante-sub")))
+                .isInstanceOf(MissingOwnerOidException.class);
     }
 
     @Test
     void updateStatus_estudianteRequestingNonCancelTarget_throwsTransitionNotPermitted() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("estudiante-uuid", BookingStatus.SOLICITADA));
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
 
-        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, estudianteAuthentication("estudiante-uuid")))
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, estudianteAuthentication("estudiante-oid")))
                 .isInstanceOf(BookingTransitionNotPermittedException.class);
     }
 
     @Test
     void updateStatus_estudianteCancellingFromSolicitada_returnsCancelled() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("estudiante-uuid", BookingStatus.SOLICITADA));
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
         given(repository.saveAndFlush(booking)).willReturn(booking);
 
-        BookingResponse response = service.updateStatus(id, BookingStatus.CANCELADA, estudianteAuthentication("estudiante-uuid"));
+        BookingResponse response = service.updateStatus(id, BookingStatus.CANCELADA, estudianteAuthentication("estudiante-oid"));
 
         assertThat(response.status()).isEqualTo(BookingStatus.CANCELADA);
     }
@@ -150,30 +208,30 @@ class BookingServiceTest {
     @Test
     void updateStatus_estudianteCancellingFromEnPreparacion_throwsIllegalTransition() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("estudiante-uuid", BookingStatus.EN_PREPARACION));
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.EN_PREPARACION));
         given(repository.findById(id)).willReturn(Optional.of(booking));
 
-        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.CANCELADA, estudianteAuthentication("estudiante-uuid")))
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.CANCELADA, estudianteAuthentication("estudiante-oid")))
                 .isInstanceOf(IllegalBookingTransitionException.class);
     }
 
     @Test
     void updateStatus_tecnicoSkippingForwardToEnUso_throwsIllegalTransition() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("estudiante-uuid", BookingStatus.SOLICITADA));
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
 
-        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.EN_USO, staffAuthentication("tecnico-uuid", "TECNICO")))
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.EN_USO, staffAuthentication("tecnico-oid", "TECNICO")))
                 .isInstanceOf(IllegalBookingTransitionException.class);
     }
 
     @Test
     void updateStatus_tecnicoActingOnTerminalDevuelta_throwsIllegalTransition() {
         UUID id = UUID.randomUUID();
-        Booking booking = withId(bookingOf("estudiante-uuid", BookingStatus.DEVUELTA));
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.DEVUELTA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
 
-        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-uuid", "TECNICO")))
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
                 .isInstanceOf(IllegalBookingTransitionException.class);
     }
 
@@ -182,34 +240,63 @@ class BookingServiceTest {
         UUID id = UUID.randomUUID();
         given(repository.findById(id)).willReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-uuid", "TECNICO")))
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
                 .isInstanceOf(BookingNotFoundException.class);
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void list_asEstudiante_scopesToOwnStudentSub() {
+    void list_asEstudiante_scopesToOwnStudentOid() {
         given(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class)))
-                .willReturn(List.of(withId(bookingOf("estudiante-uuid", BookingStatus.SOLICITADA))));
+                .willReturn(List.of(withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA))));
 
-        List<BookingResponse> responses = service.list(null, null, null, estudianteAuthentication("estudiante-uuid"));
+        List<BookingResponse> responses = service.list(null, null, null, estudianteAuthentication("estudiante-oid"));
 
         assertThat(responses).hasSize(1);
-        assertThat(responses.get(0).studentSub()).isEqualTo("estudiante-uuid");
+        assertThat(responses.get(0).studentOid()).isEqualTo("estudiante-oid");
     }
 
-    private static Booking bookingOf(String studentSub, BookingStatus status) {
+    @Test
+    void list_estudianteWithMissingOidClaim_throwsMissingOwnerOid() {
+        assertThatThrownBy(() -> service.list(null, null, null, estudianteAuthenticationWithNoOid("estudiante-sub")))
+                .isInstanceOf(MissingOwnerOidException.class);
+    }
+
+    private static Booking bookingOf(String studentOid, BookingStatus status) {
         Booking booking = new Booking(
-                UUID.randomUUID(), studentSub, Instant.parse("2026-09-15T10:00:00Z"), Instant.parse("2026-09-15T12:00:00Z"), null);
+                UUID.randomUUID(), studentOid, Instant.parse("2026-09-15T10:00:00Z"), Instant.parse("2026-09-15T12:00:00Z"), null);
         setField(booking, "status", status);
         return booking;
     }
 
-    private static JwtAuthenticationToken estudianteAuthentication(String subject) {
-        return staffAuthentication(subject, "ESTUDIANTE");
+    private static JwtAuthenticationToken estudianteAuthentication(String oid) {
+        return jwtAuthentication(oid, oid, "ESTUDIANTE");
     }
 
-    private static JwtAuthenticationToken staffAuthentication(String subject, String role) {
+    private static JwtAuthenticationToken staffAuthentication(String oid, String role) {
+        return jwtAuthentication(oid, oid, role);
+    }
+
+    private static JwtAuthenticationToken jwtAuthentication(String subject, String oid, String role) {
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "RS256")
+                .subject(subject)
+                .claim("oid", oid)
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(60))
+                .build();
+        return new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_" + role)));
+    }
+
+    private static JwtAuthenticationToken estudianteAuthenticationWithNoOid(String subject) {
+        return authenticationWithNoOid(subject, "ESTUDIANTE");
+    }
+
+    private static JwtAuthenticationToken staffAuthenticationWithNoOid(String subject, String role) {
+        return authenticationWithNoOid(subject, role);
+    }
+
+    private static JwtAuthenticationToken authenticationWithNoOid(String subject, String role) {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "RS256")
                 .subject(subject)

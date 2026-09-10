@@ -3,6 +3,7 @@ import { apiFetch } from '../api/httpClient'
 
 export interface MeResponse {
   sub: string
+  oid: string
   username: string
   email: string
   roles: string[]

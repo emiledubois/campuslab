@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -148,8 +147,9 @@ class ConcurrentStatusChangeRaceTest extends AbstractIntegrationTest {
                 .subject(subject)
                 .issuedAt(Instant.now())
                 .expiresAt(Instant.now().plusSeconds(60))
-                .claim("iss", "http://localhost:8081/realms/campuslab")
-                .claim("realm_access", Map.of("roles", roles))
+                .claim("oid", subject)
+                .claim("iss", "https://login.microsoftonline.com/test-tenant/v2.0")
+                .claim("roles", roles)
                 .build();
     }
 }

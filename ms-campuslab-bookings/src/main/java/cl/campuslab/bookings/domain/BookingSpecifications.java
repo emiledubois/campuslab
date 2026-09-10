@@ -13,8 +13,8 @@ public final class BookingSpecifications {
     private BookingSpecifications() {
     }
 
-    public static Specification<Booking> hasStudentSub(String studentSub) {
-        return (root, query, cb) -> cb.equal(root.get("studentSub"), studentSub);
+    public static Specification<Booking> hasStudentOid(String studentOid) {
+        return (root, query, cb) -> cb.equal(root.get("studentOid"), studentOid);
     }
 
     public static Specification<Booking> hasStatus(BookingStatus status) {

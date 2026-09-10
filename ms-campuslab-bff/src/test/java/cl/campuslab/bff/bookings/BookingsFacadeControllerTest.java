@@ -15,7 +15,6 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -257,8 +256,9 @@ class BookingsFacadeControllerTest {
                 .subject(subject)
                 .issuedAt(Instant.now())
                 .expiresAt(Instant.now().plusSeconds(60))
-                .claim("iss", "http://localhost:8081/realms/campuslab")
-                .claim("realm_access", Map.of("roles", roles))
+                .claim("oid", subject + "-oid")
+                .claim("iss", "https://login.microsoftonline.com/test-tenant/v2.0")
+                .claim("roles", roles)
                 .build();
     }
 }

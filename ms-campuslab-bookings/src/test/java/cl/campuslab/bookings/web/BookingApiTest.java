@@ -13,7 +13,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -66,7 +65,7 @@ class BookingApiTest extends AbstractIntegrationTest {
                 .andExpect(header().exists("Location"))
                 .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.status").value("SOLICITADA"))
-                .andExpect(jsonPath("$.studentSub").value("estudiante-uuid"))
+                .andExpect(jsonPath("$.studentOid").value("estudiante-uuid"))
                 .andExpect(jsonPath("$.version").value(0));
     }
 
@@ -87,7 +86,7 @@ class BookingApiTest extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/bookings").header("Authorization", "Bearer estudiante-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.id == '" + ownId + "')]").exists())
-                .andExpect(jsonPath("$[?(@.studentSub == 'estudiante2-uuid')]").doesNotExist());
+                .andExpect(jsonPath("$[?(@.studentOid == 'estudiante2-uuid')]").doesNotExist());
     }
 
     @Test
@@ -354,8 +353,9 @@ class BookingApiTest extends AbstractIntegrationTest {
                 .subject(subject)
                 .issuedAt(Instant.now())
                 .expiresAt(Instant.now().plusSeconds(60))
-                .claim("iss", "http://localhost:8081/realms/campuslab")
-                .claim("realm_access", Map.of("roles", roles))
+                .claim("oid", subject)
+                .claim("iss", "https://login.microsoftonline.com/test-tenant/v2.0")
+                .claim("roles", roles)
                 .build();
     }
 }

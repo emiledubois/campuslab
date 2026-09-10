@@ -10,7 +10,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -24,10 +23,13 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * Exercises the full resource-server filter chain (BearerTokenAuthenticationFilter ->
  * JwtDecoder -> RolesJwtAuthenticationConverter -> authorizeHttpRequests) with a mocked
- * JwtDecoder standing in for real issuer/signature/JWKS validation - that real validation
- * is provided by Spring Security + Nimbus and is verified against a running Keycloak by
- * QA per the design doc's acceptance criteria; this test proves this slice's own wiring
- * (role mapping, path rules, CORS allow-list, actuator exemption, response shapes).
+ * JwtDecoder standing in for real issuer/signature/JWKS validation - this proves this
+ * slice's own wiring (role mapping, path rules, CORS allow-list, actuator exemption,
+ * response shapes), not issuer/signature/audience/expiry validation itself. The real
+ * Entra validator chain (issuer, audience, signature, expiry, alg:none rejection) is
+ * proven separately, against a real (non-mocked) JwtDecoder and a local mock
+ * discovery/JWKS server, by EntraJwtValidationTest - see
+ * docs/designs/entra-migration.md's "Test token strategy" section.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
@@ -123,8 +125,9 @@ class SecurityIntegrationTest {
                 .expiresAt(Instant.now().plusSeconds(60))
                 .claim("preferred_username", username)
                 .claim("email", username + "@campuslab.local")
-                .claim("iss", "http://localhost:8081/realms/campuslab")
-                .claim("realm_access", Map.of("roles", roles))
+                .claim("oid", subject + "-oid")
+                .claim("iss", "https://login.microsoftonline.com/test-tenant/v2.0")
+                .claim("roles", roles)
                 .build();
     }
 }

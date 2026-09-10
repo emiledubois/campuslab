@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import type { AuthProvider } from './AuthProvider'
+import { readAuthConfig } from './authConfig'
 import { AuthContext } from './authContext'
-import { createAuthProvider } from './authProviderFactory'
-import { setActiveAuthProvider } from './authRegistry'
+import { MsalAuthProvider } from './MsalAuthProvider'
+import { setActiveAuthProvider, type SessionProvider } from './authRegistry'
 
 interface AuthContextProviderProps {
   children: ReactNode
-  /** Test-only injection point; production always uses the config-driven factory. */
-  provider?: AuthProvider
+  /** Test-only injection point; production always uses MsalAuthProvider, unconditionally. */
+  provider?: SessionProvider
 }
 
 export function AuthContextProvider({ children, provider: providerOverride }: AuthContextProviderProps) {
-  const [provider] = useState<AuthProvider>(() => providerOverride ?? createAuthProvider())
+  const [provider] = useState<SessionProvider>(() => providerOverride ?? new MsalAuthProvider(readAuthConfig()))
   const [isLoading, setIsLoading] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
 

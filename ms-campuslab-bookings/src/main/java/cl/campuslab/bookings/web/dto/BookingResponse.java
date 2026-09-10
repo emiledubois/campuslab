@@ -8,7 +8,7 @@ import java.util.UUID;
 public record BookingResponse(
         UUID id,
         UUID resourceId,
-        String studentSub,
+        String studentOid,
         Instant requestedStart,
         Instant requestedEnd,
         String notes,
@@ -21,7 +21,7 @@ public record BookingResponse(
         return new BookingResponse(
                 entity.getId(),
                 entity.getResourceId(),
-                entity.getStudentSub(),
+                entity.getStudentOid(),
                 entity.getRequestedStart(),
                 entity.getRequestedEnd(),
                 entity.getNotes(),

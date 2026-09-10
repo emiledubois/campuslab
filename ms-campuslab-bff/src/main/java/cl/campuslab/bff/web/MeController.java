@@ -10,6 +10,11 @@ import org.springframework.web.bind.annotation.RestController;
  * No role restriction - every authenticated role needs to know who it is, and the
  * identity returned is always derived from the caller's own token, so there is no
  * ownership check to make here (there is no path/body id a caller could manipulate).
+ * {@code oid} (Entra's tenant-wide object id) is what cross-service logging/display
+ * keys on going forward, not the pairwise-per-application {@code sub} - both are
+ * returned, but {@code oid} may defensively fall back to {@code sub} like the other
+ * display fields since this is identity display, not the bookings ownership check
+ * (which must never fall back, see BookingService).
  */
 @RestController
 public class MeController {
@@ -19,7 +24,9 @@ public class MeController {
         Jwt jwt = authentication.getToken();
         String username = firstClaim(jwt, "preferred_username", "email", "name");
         String email = firstClaim(jwt, "email", "preferred_username", "name");
-        return new MeResponse(jwt.getSubject(), username, email, AuthenticatedPrincipal.roles(authentication), jwt.getIssuer().toString());
+        String oid = firstClaim(jwt, "oid");
+        return new MeResponse(
+                jwt.getSubject(), oid, username, email, AuthenticatedPrincipal.roles(authentication), jwt.getIssuer().toString());
     }
 
     private static String firstClaim(Jwt jwt, String... claimNames) {

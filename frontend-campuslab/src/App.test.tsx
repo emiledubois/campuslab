@@ -43,11 +43,12 @@ describe('App', () => {
         vi.fn().mockResolvedValue(
           new Response(
             JSON.stringify({
-              sub: 'estudiante-uuid',
+              sub: 'estudiante-sub',
+              oid: 'estudiante-oid',
               username: 'estudiante.test',
               email: 'estudiante.test@campuslab.local',
               roles: ['ESTUDIANTE'],
-              issuer: 'http://localhost:8081/realms/campuslab',
+              issuer: 'https://login.microsoftonline.com/test-tenant/v2.0',
             }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
           ),

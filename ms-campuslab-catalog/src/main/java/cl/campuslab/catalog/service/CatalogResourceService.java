@@ -42,8 +42,8 @@ public class CatalogResourceService {
                 request.stock(), request.cupo());
         CatalogResource saved = repository.save(entity);
 
-        log.info("Catalog resource action=[CREATE] sub=[{}] roles=[{}] id=[{}]",
-                subjectOf(authentication), rolesOf(authentication), saved.getId());
+        log.info("Catalog resource action=[CREATE] oid=[{}] roles=[{}] id=[{}]",
+                oidOf(authentication), rolesOf(authentication), saved.getId());
         return CatalogResourceResponse.from(saved);
     }
 
@@ -65,8 +65,8 @@ public class CatalogResourceService {
         // both having read version=0 and racing to update it (see design doc §4/AC15).
         CatalogResource saved = repository.saveAndFlush(entity);
 
-        log.info("Catalog resource action=[UPDATE] sub=[{}] roles=[{}] id=[{}] stockBefore=[{}] stockAfter=[{}] cupoBefore=[{}] cupoAfter=[{}]",
-                subjectOf(authentication), rolesOf(authentication), saved.getId(),
+        log.info("Catalog resource action=[UPDATE] oid=[{}] roles=[{}] id=[{}] stockBefore=[{}] stockAfter=[{}] cupoBefore=[{}] cupoAfter=[{}]",
+                oidOf(authentication), rolesOf(authentication), saved.getId(),
                 stockBefore, saved.getStock(), cupoBefore, saved.getCupo());
         return CatalogResourceResponse.from(saved);
     }
@@ -89,8 +89,12 @@ public class CatalogResourceService {
         }
     }
 
-    private static String subjectOf(JwtAuthenticationToken authentication) {
-        return authentication.getToken().getSubject();
+    /** Display/logging only (cross-service correlation, see docs/designs/entra-migration.md
+     * §3/§7 A09) - falls back to {@code sub} defensively since catalog resources have no
+     * ownership concept for this value to gate. */
+    private static String oidOf(JwtAuthenticationToken authentication) {
+        String oid = authentication.getToken().getClaimAsString("oid");
+        return (oid != null && !oid.isBlank()) ? oid : authentication.getToken().getSubject();
     }
 
     private static List<String> rolesOf(JwtAuthenticationToken authentication) {

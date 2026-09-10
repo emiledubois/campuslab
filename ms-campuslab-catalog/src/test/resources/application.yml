@@ -11,6 +11,5 @@ management:
       show-details: never
 
 oidc:
-  issuer-uri: https://issuer.example.test/realms/campuslab
-  audience: campuslab-api
-  roles-claim: realm_access.roles
+  issuer-uri: https://login.microsoftonline.com/test-tenant/v2.0
+  audience: api://test-audience

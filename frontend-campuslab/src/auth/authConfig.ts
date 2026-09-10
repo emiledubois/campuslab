@@ -19,19 +19,3 @@ export function readAuthConfig(): AuthConfig {
     postLogoutRedirectUri: `${window.location.origin}/login`,
   }
 }
-
-export type AuthProviderKind = 'msal' | 'oidc-client-ts'
-
-/**
- * Never an `if` on issuer in application code: the provider kind is either an
- * explicit env override, or inferred once from the authority's URL scheme
- * (msal-browser rejects any non-https authority outright).
- */
-export function resolveAuthProviderKind(): AuthProviderKind {
-  const explicit = import.meta.env.VITE_AUTH_PROVIDER
-  if (explicit === 'msal' || explicit === 'oidc-client-ts') {
-    return explicit
-  }
-  const authority = import.meta.env.VITE_OIDC_AUTHORITY ?? ''
-  return authority.startsWith('https:') ? 'msal' : 'oidc-client-ts'
-}

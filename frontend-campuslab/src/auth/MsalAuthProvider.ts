@@ -1,12 +1,12 @@
 import { PublicClientApplication } from '@azure/msal-browser'
 import type { AuthConfig } from './authConfig'
-import type { AuthProvider } from './AuthProvider'
+import type { SessionProvider } from './authRegistry'
 
 /**
- * Azure AD in deployment. Native `msal-browser` support - no workaround needed
- * here, unlike the local Keycloak path (see OidcClientTsAuthProvider).
+ * Entra ID, the only issuer in every environment (docs/DECISIONES_PROFESOR.md #6) -
+ * the sole production implementation of SessionProvider, selected unconditionally.
  */
-export class MsalAuthProvider implements AuthProvider {
+export class MsalAuthProvider implements SessionProvider {
   private readonly msalInstance: PublicClientApplication
   private readonly scopes: string[]
 

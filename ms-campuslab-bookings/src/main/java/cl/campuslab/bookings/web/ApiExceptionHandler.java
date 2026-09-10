@@ -7,6 +7,7 @@ import cl.campuslab.bookings.service.InvalidBookingQueryException;
 import cl.campuslab.bookings.service.InvalidBookingStatusException;
 import cl.campuslab.bookings.service.InvalidBookingWindowException;
 import cl.campuslab.bookings.service.MalformedBookingIdException;
+import cl.campuslab.bookings.service.MissingOwnerOidException;
 import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -68,6 +69,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
         problem.setTitle("Bad Request");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problem);
+    }
+
+    @ExceptionHandler(MissingOwnerOidException.class)
+    public ResponseEntity<ProblemDetail> handleMissingOwnerOid(MissingOwnerOidException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());
+        problem.setTitle("Unauthorized");
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(problem);
     }
 
     @ExceptionHandler(BookingNotFoundException.class)

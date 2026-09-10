@@ -8,11 +8,12 @@ import { CatalogPage } from './CatalogPage'
 function meResponse(roles: string[]) {
   return new Response(
     JSON.stringify({
-      sub: 'user-uuid',
+      sub: 'user-sub',
+      oid: 'user-oid',
       username: 'user.test',
       email: 'user.test@campuslab.local',
       roles,
-      issuer: 'http://localhost:8081/realms/campuslab',
+      issuer: 'https://login.microsoftonline.com/test-tenant/v2.0',
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   )

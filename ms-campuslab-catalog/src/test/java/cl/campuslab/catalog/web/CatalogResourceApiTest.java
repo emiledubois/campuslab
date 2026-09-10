@@ -250,8 +250,9 @@ class CatalogResourceApiTest extends AbstractIntegrationTest {
                 .subject(subject)
                 .issuedAt(Instant.now())
                 .expiresAt(Instant.now().plusSeconds(60))
-                .claim("iss", "http://localhost:8081/realms/campuslab")
-                .claim("realm_access", java.util.Map.of("roles", roles))
+                .claim("oid", subject + "-oid")
+                .claim("iss", "https://login.microsoftonline.com/test-tenant/v2.0")
+                .claim("roles", roles)
                 .build();
     }
 }

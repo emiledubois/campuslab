@@ -127,6 +127,7 @@ class BookingControllerTest {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "RS256")
                 .subject("estudiante-uuid")
+                .claim("oid", "estudiante-uuid")
                 .issuedAt(Instant.now())
                 .expiresAt(Instant.now().plusSeconds(60))
                 .build();
@@ -135,7 +136,7 @@ class BookingControllerTest {
 
     private static BookingResponse response(UUID id, BookingStatus status, Long version) {
         Instant now = Instant.now();
-        return new BookingResponse(id, UUID.randomUUID(), "estudiante-uuid",
+        return new BookingResponse(id, UUID.randomUUID(), "estudiante-uuid" /* studentOid */,
                 Instant.parse("2026-09-15T10:00:00Z"), Instant.parse("2026-09-15T12:00:00Z"), null, status, version, now, now);
     }
 }

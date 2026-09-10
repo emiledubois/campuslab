@@ -18,9 +18,10 @@ import java.util.UUID;
  * {@code id} is application-assigned (Hibernate's built-in UUID generator), same
  * IDOR-mitigation rationale as catalog (non-enumerable ids). {@code resourceId} is a
  * plain opaque UUID - no foreign key, no cross-service join (database-per-service).
- * {@code studentSub} is the IdP's {@code sub} claim, set exactly once at creation from
- * the validated JWT and never updatable thereafter - it is the field the ownership
- * check in the service layer is built on.
+ * {@code studentOid} is Entra's tenant-wide {@code oid} claim (not the pairwise-per-
+ * application {@code sub} - see V3 migration/docs/designs/entra-migration.md §4), set
+ * exactly once at creation from the validated JWT and never updatable thereafter - it
+ * is the field the ownership check in the service layer is built on.
  */
 @Entity
 @Table(name = "booking")
@@ -33,8 +34,8 @@ public class Booking {
     @Column(name = "resource_id", nullable = false, updatable = false)
     private UUID resourceId;
 
-    @Column(name = "student_sub", nullable = false, updatable = false, length = 255)
-    private String studentSub;
+    @Column(name = "student_oid", nullable = false, updatable = false, length = 255)
+    private String studentOid;
 
     @Column(name = "requested_start", nullable = false)
     private Instant requestedStart;
@@ -62,9 +63,9 @@ public class Booking {
         // JPA
     }
 
-    public Booking(UUID resourceId, String studentSub, Instant requestedStart, Instant requestedEnd, String notes) {
+    public Booking(UUID resourceId, String studentOid, Instant requestedStart, Instant requestedEnd, String notes) {
         this.resourceId = resourceId;
-        this.studentSub = studentSub;
+        this.studentOid = studentOid;
         this.requestedStart = requestedStart;
         this.requestedEnd = requestedEnd;
         this.notes = notes;
@@ -95,8 +96,8 @@ public class Booking {
         return resourceId;
     }
 
-    public String getStudentSub() {
-        return studentSub;
+    public String getStudentOid() {
+        return studentOid;
     }
 
     public Instant getRequestedStart() {

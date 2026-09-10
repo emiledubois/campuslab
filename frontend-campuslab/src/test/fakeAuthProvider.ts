@@ -1,4 +1,4 @@
-import type { AuthProvider } from '../auth/AuthProvider'
+import type { SessionProvider } from '../auth/authRegistry'
 
 export interface FakeAuthProviderOptions {
   authenticated?: boolean
@@ -6,10 +6,10 @@ export interface FakeAuthProviderOptions {
 }
 
 /**
- * Deterministic test double for AuthProvider - avoids coupling component/route
- * tests to a real MSAL/oidc-client-ts instance (network calls, redirects, storage).
+ * Deterministic test double for SessionProvider - avoids coupling component/route
+ * tests to a real MSAL instance (network calls, redirects, session storage).
  */
-export function createFakeAuthProvider(options: FakeAuthProviderOptions = {}): AuthProvider {
+export function createFakeAuthProvider(options: FakeAuthProviderOptions = {}): SessionProvider {
   let authenticated = options.authenticated ?? false
   const accessToken = options.accessToken ?? (authenticated ? 'fake-access-token' : null)
   const listeners = new Set<() => void>()

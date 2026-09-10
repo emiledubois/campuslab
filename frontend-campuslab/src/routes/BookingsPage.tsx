@@ -7,7 +7,7 @@ type BookingStatus = 'SOLICITADA' | 'APROBADA' | 'EN_PREPARACION' | 'EN_USO' | '
 interface Booking {
   id: string
   resourceId: string
-  studentSub: string
+  studentOid: string
   requestedStart: string
   requestedEnd: string
   notes: string | null

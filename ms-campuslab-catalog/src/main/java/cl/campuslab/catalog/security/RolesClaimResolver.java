@@ -5,28 +5,18 @@ import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /**
- * Walks {@code OIDC_ROLES_CLAIM} (dot-separated path) through a claims map so the
- * same code reads Keycloak's nested {@code realm_access.roles} and Azure AD's flat
- * {@code roles} - the roles claim shape is configuration, never an {@code if} on issuer.
+ * Entra ID is the only issuer, in every environment (docs/DECISIONES_PROFESOR.md #6) -
+ * there is exactly one roles-claim shape (a flat {@code roles} list), so this reads it
+ * directly rather than walking a configurable dot-path.
  */
 @Component
 public class RolesClaimResolver {
 
-    private final String[] rolesClaimPath;
-
-    public RolesClaimResolver(OidcProperties oidcProperties) {
-        this.rolesClaimPath = oidcProperties.rolesClaim().split("\\.");
-    }
+    private static final String ROLES_CLAIM = "roles";
 
     public List<String> resolve(Map<String, Object> claims) {
-        Object current = claims;
-        for (String segment : rolesClaimPath) {
-            if (!(current instanceof Map<?, ?> map)) {
-                return List.of();
-            }
-            current = map.get(segment);
-        }
-        if (current instanceof List<?> list) {
+        Object rolesValue = claims.get(ROLES_CLAIM);
+        if (rolesValue instanceof List<?> list) {
             return list.stream()
                     .filter(String.class::isInstance)
                     .map(String.class::cast)

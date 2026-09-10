@@ -21,23 +21,36 @@ class AdminPingControllerTest {
     private final AdminPingController controller = new AdminPingController();
 
     @Test
-    void ping_withAdminToken_returnsScopeSubjectAndRoles() {
-        Jwt jwt = jwt();
+    void ping_withAdminToken_returnsScopeOidAndRoles() {
+        Jwt jwt = jwt("3f2a-uuid", "3f2a1c9e-oid");
         JwtAuthenticationToken authentication = new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
 
         AdminPingResponse response = controller.ping(authentication);
 
         assertThat(response.scope()).isEqualTo("admin-only");
-        assertThat(response.sub()).isEqualTo("3f2a-uuid");
+        assertThat(response.oid()).isEqualTo("3f2a1c9e-oid");
         assertThat(response.roles()).containsExactly("ADMIN");
     }
 
-    private static Jwt jwt() {
-        return Jwt.withTokenValue("token")
+    @Test
+    void ping_withNoOidClaim_fallsBackToSubjectForDisplay() {
+        Jwt jwt = jwt("3f2a-uuid", null);
+        JwtAuthenticationToken authentication = new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+
+        AdminPingResponse response = controller.ping(authentication);
+
+        assertThat(response.oid()).isEqualTo("3f2a-uuid");
+    }
+
+    private static Jwt jwt(String subject, String oid) {
+        Jwt.Builder builder = Jwt.withTokenValue("token")
                 .header("alg", "RS256")
-                .subject("3f2a-uuid")
+                .subject(subject)
                 .issuedAt(Instant.now())
-                .expiresAt(Instant.now().plusSeconds(60))
-                .build();
+                .expiresAt(Instant.now().plusSeconds(60));
+        if (oid != null) {
+            builder.claim("oid", oid);
+        }
+        return builder.build();
     }
 }

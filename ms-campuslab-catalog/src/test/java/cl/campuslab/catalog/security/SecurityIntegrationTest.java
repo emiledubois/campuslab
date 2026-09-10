@@ -11,7 +11,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import cl.campuslab.catalog.AbstractIntegrationTest;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -26,9 +25,11 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * Exercises catalog's own resource-server filter chain independently of the BFF
  * (see design doc §2's defense-in-depth decision and AC20) - a mocked JwtDecoder
- * stands in for real issuer/signature/JWKS validation (verified against a running
- * Keycloak by QA), mirroring ms-campuslab-bff's own SecurityIntegrationTest; this
- * proves catalog's own wiring: role mapping, path rules, actuator exemption.
+ * stands in for real issuer/signature/JWKS validation, mirroring ms-campuslab-bff's
+ * own SecurityIntegrationTest; this proves catalog's own wiring: role mapping, path
+ * rules, actuator exemption, not issuer/signature/audience/expiry validation itself.
+ * The real Entra validator chain is proven separately, against a real (non-mocked)
+ * JwtDecoder and a local mock discovery/JWKS server, by EntraJwtValidationTest.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
@@ -132,8 +133,9 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
                 .subject(subject)
                 .issuedAt(Instant.now())
                 .expiresAt(Instant.now().plusSeconds(60))
-                .claim("iss", "http://localhost:8081/realms/campuslab")
-                .claim("realm_access", Map.of("roles", roles))
+                .claim("oid", subject + "-oid")
+                .claim("iss", "https://login.microsoftonline.com/test-tenant/v2.0")
+                .claim("roles", roles)
                 .build();
     }
 }

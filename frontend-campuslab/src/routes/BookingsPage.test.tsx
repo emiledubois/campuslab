@@ -8,11 +8,12 @@ import { BookingsPage } from './BookingsPage'
 function meResponse(roles: string[]) {
   return new Response(
     JSON.stringify({
-      sub: 'user-uuid',
+      sub: 'user-sub',
+      oid: 'user-oid',
       username: 'user.test',
       email: 'user.test@campuslab.local',
       roles,
-      issuer: 'http://localhost:8081/realms/campuslab',
+      issuer: 'https://login.microsoftonline.com/test-tenant/v2.0',
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   )
@@ -21,7 +22,7 @@ function meResponse(roles: string[]) {
 const OWN_BOOKING = {
   id: 'b1c2c3d4-2a3b-4e10-9c2f-8b6d2b6b0a11',
   resourceId: '5f9a5c1e-2a3b-4e10-9c2f-8b6d2b6b0a11',
-  studentSub: 'estudiante-uuid',
+  studentOid: 'estudiante-uuid',
   requestedStart: '2026-09-15T10:00:00Z',
   requestedEnd: '2026-09-15T12:00:00Z',
   notes: 'Practica de redes',
@@ -111,7 +112,7 @@ describe('BookingsPage', () => {
       ...OWN_BOOKING,
       id: 'other-id',
       resourceId: 'other-resource-id',
-      studentSub: 'other-student-uuid',
+      studentOid: 'other-student-uuid',
     }
     vi.stubGlobal(
       'fetch',

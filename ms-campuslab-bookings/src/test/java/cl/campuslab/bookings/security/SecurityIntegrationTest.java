@@ -11,7 +11,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import cl.campuslab.bookings.AbstractIntegrationTest;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,9 +26,11 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * Exercises bookings' own resource-server filter chain independently of the BFF
  * (see design doc §2's defense-in-depth decision and AC27) - a mocked JwtDecoder
- * stands in for real issuer/signature/JWKS validation (verified against a running
- * Keycloak by QA), mirroring catalog's own SecurityIntegrationTest; this proves
- * bookings' own wiring: role mapping, path rules, actuator exemption. The
+ * stands in for real issuer/signature/JWKS validation, mirroring catalog's own
+ * SecurityIntegrationTest; this proves bookings' own wiring: role mapping, path
+ * rules, actuator exemption, not issuer/signature/audience/expiry validation
+ * itself - that is proven separately, against a real (non-mocked) JwtDecoder and a
+ * local mock discovery/JWKS server, by EntraJwtValidationTest. The
  * ownership/state-machine business logic itself is covered by BookingApiTest.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -164,8 +165,9 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
                 .subject(subject)
                 .issuedAt(Instant.now())
                 .expiresAt(Instant.now().plusSeconds(60))
-                .claim("iss", "http://localhost:8081/realms/campuslab")
-                .claim("realm_access", Map.of("roles", roles))
+                .claim("oid", subject)
+                .claim("iss", "https://login.microsoftonline.com/test-tenant/v2.0")
+                .claim("roles", roles)
                 .build();
     }
 }

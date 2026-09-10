@@ -26,4 +26,3 @@ management:
 oidc:
   issuer-uri: ${OIDC_ISSUER_URI}
   audience: ${OIDC_AUDIENCE}
-  roles-claim: ${OIDC_ROLES_CLAIM}
