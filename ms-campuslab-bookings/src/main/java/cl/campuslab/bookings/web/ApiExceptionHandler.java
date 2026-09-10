@@ -2,6 +2,9 @@ package cl.campuslab.bookings.web;
 
 import cl.campuslab.bookings.service.BookingNotFoundException;
 import cl.campuslab.bookings.service.BookingTransitionNotPermittedException;
+import cl.campuslab.bookings.service.CatalogInsufficientStockException;
+import cl.campuslab.bookings.service.CatalogResourceNotFoundException;
+import cl.campuslab.bookings.service.CatalogServiceUnavailableException;
 import cl.campuslab.bookings.service.IllegalBookingTransitionException;
 import cl.campuslab.bookings.service.InvalidBookingQueryException;
 import cl.campuslab.bookings.service.InvalidBookingStatusException;
@@ -105,5 +108,26 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 HttpStatus.CONFLICT, "Booking status was already changed by another request; reload and retry.");
         problem.setTitle("Conflict");
         return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
+    }
+
+    @ExceptionHandler(CatalogInsufficientStockException.class)
+    public ResponseEntity<ProblemDetail> handleCatalogInsufficientStock(CatalogInsufficientStockException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Conflict");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
+    }
+
+    @ExceptionHandler(CatalogResourceNotFoundException.class)
+    public ResponseEntity<ProblemDetail> handleCatalogResourceNotFound(CatalogResourceNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Conflict");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
+    }
+
+    @ExceptionHandler(CatalogServiceUnavailableException.class)
+    public ResponseEntity<ProblemDetail> handleCatalogServiceUnavailable(CatalogServiceUnavailableException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+        problem.setTitle("Service Unavailable");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(problem);
     }
 }

@@ -3,9 +3,14 @@ package cl.campuslab.bookings.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import cl.campuslab.bookings.catalog.CatalogDecrementOutcome;
+import cl.campuslab.bookings.catalog.CatalogStockClient;
 import cl.campuslab.bookings.domain.Booking;
 import cl.campuslab.bookings.domain.BookingRepository;
 import cl.campuslab.bookings.domain.BookingStatus;
@@ -21,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -31,11 +37,14 @@ class BookingServiceTest {
     @Mock
     private BookingRepository repository;
 
+    @Mock
+    private CatalogStockClient catalogStockClient;
+
     private BookingService service;
 
     @BeforeEach
     void setUp() {
-        service = new BookingService(repository);
+        service = new BookingService(repository, catalogStockClient);
     }
 
     @Test
@@ -140,6 +149,7 @@ class BookingServiceTest {
         UUID id = UUID.randomUUID();
         Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.SUCCESS);
         given(repository.saveAndFlush(booking)).willReturn(booking);
 
         BookingResponse response = service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO"));
@@ -155,12 +165,126 @@ class BookingServiceTest {
         UUID id = UUID.randomUUID();
         Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.SUCCESS);
         given(repository.saveAndFlush(booking)).willReturn(booking);
         JwtAuthenticationToken tecnicoWithNoOid = staffAuthenticationWithNoOid("tecnico-sub", "TECNICO");
 
         BookingResponse response = service.updateStatus(id, BookingStatus.APROBADA, tecnicoWithNoOid);
 
         assertThat(response.status()).isEqualTo(BookingStatus.APROBADA);
+    }
+
+    @Test
+    void updateStatus_approvalWithCatalogInsufficientStock_throwsAndNeverWritesLocally() {
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.INSUFFICIENT_STOCK);
+
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
+                .isInstanceOf(CatalogInsufficientStockException.class);
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void updateStatus_approvalWithCatalogResourceNotFound_throwsConflictNeverFourOhFour() {
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.NOT_FOUND);
+
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
+                .isInstanceOf(CatalogResourceNotFoundException.class);
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void updateStatus_approvalWithCatalogUnreachable_throwsServiceUnavailable() {
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.UNREACHABLE);
+
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
+                .isInstanceOf(CatalogServiceUnavailableException.class);
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void updateStatus_approvalWithCatalogUnexpectedError_throwsServiceUnavailable() {
+        UUID id = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
+        given(repository.findById(id)).willReturn(Optional.of(booking));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.UNEXPECTED_ERROR);
+
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
+                .isInstanceOf(CatalogServiceUnavailableException.class);
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void updateStatus_approvalWithLocalOptimisticLockLoss_reReadShowsApproved_skipsCompensation() {
+        // Revision 1 (design doc §3 step 2/§9 AC7a): the common case - a concurrent
+        // duplicate approval of this SAME booking won the local race. Re-reading finds
+        // the booking already APROBADA, so the one physical decrement legitimately
+        // belongs to it and must NOT be reversed - deterministic proof of the
+        // disambiguation branch, independent of catalog's real timing.
+        UUID resourceId = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA, resourceId));
+        UUID id = booking.getId();
+        Booking reReadAfterRace = bookingOf("estudiante-oid", BookingStatus.APROBADA, resourceId);
+        setField(reReadAfterRace, "id", id);
+        given(repository.findById(id)).willReturn(Optional.of(booking), Optional.of(reReadAfterRace));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.SUCCESS);
+        given(repository.saveAndFlush(booking))
+                .willThrow(new ObjectOptimisticLockingFailureException(Booking.class, id));
+
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
+                .isInstanceOf(ObjectOptimisticLockingFailureException.class);
+        verify(catalogStockClient, never()).increment(any(), any(), any());
+    }
+
+    @Test
+    void updateStatus_approvalWithLocalOptimisticLockLoss_reReadShowsDifferentTransition_compensatesThenRethrows() {
+        // Revision 1 (design doc §3 step 2/§9 AC7b): a genuinely different concurrent
+        // transition won (e.g. a concurrent cancel) - re-reading finds a non-APROBADA
+        // status, so no approval survives to own the decrement and compensation is
+        // still correct.
+        UUID resourceId = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA, resourceId));
+        UUID id = booking.getId();
+        Booking reReadAfterRace = bookingOf("estudiante-oid", BookingStatus.CANCELADA, resourceId);
+        setField(reReadAfterRace, "id", id);
+        given(repository.findById(id)).willReturn(Optional.of(booking), Optional.of(reReadAfterRace));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.SUCCESS);
+        given(repository.saveAndFlush(booking))
+                .willThrow(new ObjectOptimisticLockingFailureException(Booking.class, id));
+        given(catalogStockClient.increment(any(), any(), any())).willReturn(true);
+
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
+                .isInstanceOf(ObjectOptimisticLockingFailureException.class);
+        verify(catalogStockClient, times(1)).increment(eq(resourceId), eq(id), any());
+    }
+
+    @Test
+    void updateStatus_approvalWithLocalOptimisticLockLossAndCompensationCallFails_stillRethrowsConflict() {
+        // The compensating call itself failing (catalog unreachable at that exact moment)
+        // must still surface the same 409 to the caller - the booking's local state
+        // is correct either way (design doc §3 step 2/§10 Open Question 1).
+        UUID resourceId = UUID.randomUUID();
+        Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA, resourceId));
+        UUID id = booking.getId();
+        Booking reReadAfterRace = bookingOf("estudiante-oid", BookingStatus.CANCELADA, resourceId);
+        setField(reReadAfterRace, "id", id);
+        given(repository.findById(id)).willReturn(Optional.of(booking), Optional.of(reReadAfterRace));
+        given(catalogStockClient.decrement(any(), any(), any())).willReturn(CatalogDecrementOutcome.SUCCESS);
+        given(repository.saveAndFlush(booking))
+                .willThrow(new ObjectOptimisticLockingFailureException(Booking.class, id));
+        given(catalogStockClient.increment(any(), any(), any())).willReturn(false);
+
+        assertThatThrownBy(() -> service.updateStatus(id, BookingStatus.APROBADA, staffAuthentication("tecnico-oid", "TECNICO")))
+                .isInstanceOf(ObjectOptimisticLockingFailureException.class);
+        verify(catalogStockClient).increment(eq(resourceId), eq(id), any());
     }
 
     @Test
@@ -263,8 +387,12 @@ class BookingServiceTest {
     }
 
     private static Booking bookingOf(String studentOid, BookingStatus status) {
+        return bookingOf(studentOid, status, UUID.randomUUID());
+    }
+
+    private static Booking bookingOf(String studentOid, BookingStatus status, UUID resourceId) {
         Booking booking = new Booking(
-                UUID.randomUUID(), studentOid, Instant.parse("2026-09-15T10:00:00Z"), Instant.parse("2026-09-15T12:00:00Z"), null);
+                resourceId, studentOid, Instant.parse("2026-09-15T10:00:00Z"), Instant.parse("2026-09-15T12:00:00Z"), null);
         setField(booking, "status", status);
         return booking;
     }

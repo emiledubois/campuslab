@@ -3,15 +3,21 @@ package cl.campuslab.catalog.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import cl.campuslab.catalog.domain.CatalogResource;
 import cl.campuslab.catalog.domain.CatalogResourceRepository;
 import cl.campuslab.catalog.domain.ResourceType;
+import cl.campuslab.catalog.domain.StockDecrementLedgerKey;
+import cl.campuslab.catalog.domain.StockDecrementLedgerRepository;
 import cl.campuslab.catalog.web.dto.CatalogResourceResponse;
 import cl.campuslab.catalog.web.dto.CreateCatalogResourceRequest;
 import cl.campuslab.catalog.web.dto.UpdateCatalogResourceRequest;
+import jakarta.persistence.EntityManager;
 import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.List;
@@ -33,11 +39,18 @@ class CatalogResourceServiceTest {
     @Mock
     private CatalogResourceRepository repository;
 
+    @Mock
+    private StockDecrementLedgerRepository ledgerRepository;
+
+    @Mock
+    private EntityManager entityManager;
+
     private CatalogResourceService service;
 
     @BeforeEach
     void setUp() {
-        service = new CatalogResourceService(repository);
+        service = new CatalogResourceService(repository, ledgerRepository);
+        setField(service, "entityManager", entityManager);
     }
 
     @Test
@@ -155,6 +168,146 @@ class CatalogResourceServiceTest {
         assertThat(responses.get(0).stock()).isEqualTo(100);
     }
 
+    @Test
+    void decrement_withAvailableStock_decrementsAndRecordsLedgerEntry() {
+        UUID resourceId = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        CatalogResource resource = withId(new CatalogResource(ResourceType.EQUIPO, "Microscopio", null, null, 5, null));
+        setVersion(resource, 0L);
+        StockDecrementLedgerKey key = new StockDecrementLedgerKey(resourceId, bookingId);
+        given(ledgerRepository.existsById(key)).willReturn(false);
+        given(repository.findById(resourceId)).willReturn(Optional.of(resource));
+        given(repository.saveAndFlush(resource)).willReturn(resource);
+
+        CatalogResourceResponse response = service.decrement(resourceId, bookingId, tecnicoAuthentication());
+
+        assertThat(response.stock()).isEqualTo(4);
+        verify(ledgerRepository).save(argThat(entry -> entry.getResourceId().equals(resourceId) && entry.getBookingId().equals(bookingId)));
+    }
+
+    @Test
+    void decrement_withZeroStock_throwsInsufficientStockWithoutSaving() {
+        UUID resourceId = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        CatalogResource resource = withId(new CatalogResource(ResourceType.EQUIPO, "Microscopio", null, null, 0, null));
+        given(ledgerRepository.existsById(any())).willReturn(false);
+        given(repository.findById(resourceId)).willReturn(Optional.of(resource));
+
+        assertThatThrownBy(() -> service.decrement(resourceId, bookingId, tecnicoAuthentication()))
+                .isInstanceOf(InsufficientStockException.class);
+        verify(repository, never()).saveAndFlush(any());
+        verify(ledgerRepository, never()).save(any());
+    }
+
+    @Test
+    void decrement_withUnknownResourceId_throwsResourceNotFound() {
+        UUID resourceId = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        given(ledgerRepository.existsById(any())).willReturn(false);
+        given(repository.findById(resourceId)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.decrement(resourceId, bookingId, tecnicoAuthentication()))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void decrement_replayedWithSameBookingId_returnsCurrentStateUnchangedWithoutDecrementingAgain() {
+        UUID resourceId = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        CatalogResource resource = withId(new CatalogResource(ResourceType.EQUIPO, "Microscopio", null, null, 4, null));
+        given(ledgerRepository.existsById(new StockDecrementLedgerKey(resourceId, bookingId))).willReturn(true);
+        given(repository.findById(resourceId)).willReturn(Optional.of(resource));
+
+        CatalogResourceResponse response = service.decrement(resourceId, bookingId, tecnicoAuthentication());
+
+        assertThat(response.stock()).isEqualTo(4);
+        verify(repository, never()).saveAndFlush(any());
+        verify(ledgerRepository, never()).save(any());
+    }
+
+    @Test
+    void increment_withLedgerEntryPresent_incrementsAndDeletesLedgerEntry() {
+        UUID resourceId = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        CatalogResource resource = withId(new CatalogResource(ResourceType.EQUIPO, "Microscopio", null, null, 3, null));
+        setVersion(resource, 2L);
+        StockDecrementLedgerKey key = new StockDecrementLedgerKey(resourceId, bookingId);
+        given(ledgerRepository.existsById(key)).willReturn(true);
+        given(repository.findById(resourceId)).willReturn(Optional.of(resource));
+        given(repository.saveAndFlush(resource)).willReturn(resource);
+
+        CatalogResourceResponse response = service.increment(resourceId, bookingId, tecnicoAuthentication());
+
+        assertThat(response.stock()).isEqualTo(4);
+        verify(ledgerRepository).deleteById(key);
+    }
+
+    @Test
+    void increment_withoutLedgerEntry_returnsCurrentStateUnchanged() {
+        UUID resourceId = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        CatalogResource resource = withId(new CatalogResource(ResourceType.EQUIPO, "Microscopio", null, null, 3, null));
+        given(ledgerRepository.existsById(new StockDecrementLedgerKey(resourceId, bookingId))).willReturn(false);
+        given(repository.findById(resourceId)).willReturn(Optional.of(resource));
+
+        CatalogResourceResponse response = service.increment(resourceId, bookingId, tecnicoAuthentication());
+
+        assertThat(response.stock()).isEqualTo(3);
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void increment_withUnknownResourceId_throwsResourceNotFound() {
+        UUID resourceId = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        given(ledgerRepository.existsById(any())).willReturn(true);
+        given(repository.findById(resourceId)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.increment(resourceId, bookingId, tecnicoAuthentication()))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void increment_withOneLostOptimisticLockRace_retriesAndSucceedsOnSecondAttempt() {
+        UUID resourceId = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        CatalogResource staleRead = withId(new CatalogResource(ResourceType.EQUIPO, "Microscopio", null, null, 3, null));
+        CatalogResource freshRead = withId(new CatalogResource(ResourceType.EQUIPO, "Microscopio", null, null, 3, null));
+        given(ledgerRepository.existsById(new StockDecrementLedgerKey(resourceId, bookingId))).willReturn(true);
+        given(repository.findById(resourceId)).willReturn(Optional.of(staleRead), Optional.of(freshRead));
+        given(repository.saveAndFlush(staleRead)).willThrow(new ObjectOptimisticLockingFailureException(CatalogResource.class, resourceId));
+        given(repository.saveAndFlush(freshRead)).willReturn(freshRead);
+
+        CatalogResourceResponse response = service.increment(resourceId, bookingId, tecnicoAuthentication());
+
+        assertThat(response.stock()).isEqualTo(4);
+        verify(entityManager).clear();
+    }
+
+    @Test
+    void increment_withOptimisticLockLostOnEveryAttempt_rethrowsAfterMaxAttempts() {
+        UUID resourceId = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        CatalogResource resource = withId(new CatalogResource(ResourceType.EQUIPO, "Microscopio", null, null, 3, null));
+        given(ledgerRepository.existsById(new StockDecrementLedgerKey(resourceId, bookingId))).willReturn(true);
+        given(repository.findById(resourceId)).willReturn(Optional.of(resource));
+        given(repository.saveAndFlush(resource)).willThrow(new ObjectOptimisticLockingFailureException(CatalogResource.class, resourceId));
+
+        assertThatThrownBy(() -> service.increment(resourceId, bookingId, tecnicoAuthentication()))
+                .isInstanceOf(ObjectOptimisticLockingFailureException.class);
+        verify(repository, times(3)).saveAndFlush(resource);
+    }
+
+    private static JwtAuthenticationToken tecnicoAuthentication() {
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "RS256")
+                .subject("tecnico-uuid")
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(60))
+                .build();
+        return new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_TECNICO")));
+    }
+
     private static JwtAuthenticationToken adminAuthentication() {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "RS256")
@@ -180,6 +333,17 @@ class CatalogResourceServiceTest {
             Field field = CatalogResource.class.getDeclaredField(fieldName);
             field.setAccessible(true);
             field.set(resource, value);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Sets CatalogResourceService's {@code @PersistenceContext}-injected field directly, since this test never boots a real container/EntityManager. */
+    private static void setField(Object target, String fieldName, Object value) {
+        try {
+            Field field = target.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+            field.set(target, value);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }

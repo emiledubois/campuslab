@@ -13,3 +13,15 @@ management:
 oidc:
   issuer-uri: https://login.microsoftonline.com/test-tenant/v2.0
   audience: api://test-audience
+
+# Default target for tests that never exercise the approval saga (most of them) - a
+# reserved-for-documentation address (RFC 5737 TEST-NET-1) with nothing listening, so
+# any test that DOES accidentally reach the saga branch fails fast and deterministically
+# (503, "catalog unreachable") within the short timeout below, rather than hanging.
+# Individual test classes that need a real approval flow override this via their own
+# @DynamicPropertySource pointing at a StubCatalogServer instance.
+catalog:
+  service-url: http://192.0.2.1:65535
+  client:
+    connect-timeout-ms: 300
+    read-timeout-ms: 300

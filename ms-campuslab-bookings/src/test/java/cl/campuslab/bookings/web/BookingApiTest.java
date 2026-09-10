@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import cl.campuslab.bookings.AbstractIntegrationTest;
+import cl.campuslab.bookings.catalog.StubCatalogServer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -22,6 +23,8 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -30,12 +33,24 @@ import org.springframework.test.web.servlet.MvcResult;
  * against a real Postgres (Testcontainers) so the Flyway migration and its CHECK
  * constraints are genuinely exercised, not assumed. The concurrent-PUT race (AC19)
  * has its own dedicated test class since it needs a real HTTP server, not MockMvc.
+ *
+ * <p>Since slice 4, approving a booking makes a real outbound HTTP call to catalog
+ * (design doc §2/§3), so this class wires a {@link StubCatalogServer} (abundant stock
+ * by default) as the saga's target - the saga's own success/failure branching is
+ * covered in dedicated detail by ApprovalSagaApiTest; here it only needs to not get in
+ * the way of the pre-existing regression coverage. Started in a static field
+ * initializer, not {@code @BeforeAll}, so it exists before Spring evaluates
+ * {@code @DynamicPropertySource} (which runs during context preparation, ahead of any
+ * {@code @BeforeAll}) - the same singleton-resource timing already used for POSTGRES
+ * in AbstractIntegrationTest.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
 class BookingApiTest extends AbstractIntegrationTest {
 
     private static final String RESOURCE_ID = "5f9a5c1e-2a3b-4e10-9c2f-8b6d2b6b0a11";
+
+    private static final StubCatalogServer STUB_CATALOG = new StubCatalogServer();
 
     @Autowired
     private MockMvc mockMvc;
@@ -45,6 +60,11 @@ class BookingApiTest extends AbstractIntegrationTest {
 
     @MockBean
     private JwtDecoder jwtDecoder;
+
+    @DynamicPropertySource
+    static void catalogProperties(DynamicPropertyRegistry registry) {
+        registry.add("catalog.service-url", STUB_CATALOG::baseUrl);
+    }
 
     @BeforeEach
     void stubTokens() {

@@ -1,5 +1,7 @@
 package cl.campuslab.bookings.service;
 
+import cl.campuslab.bookings.catalog.CatalogDecrementOutcome;
+import cl.campuslab.bookings.catalog.CatalogStockClient;
 import cl.campuslab.bookings.domain.Booking;
 import cl.campuslab.bookings.domain.BookingRepository;
 import cl.campuslab.bookings.domain.BookingSpecifications;
@@ -14,6 +16,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Service;
@@ -44,9 +47,11 @@ public class BookingService {
             Set.of(BookingStatus.SOLICITADA, BookingStatus.APROBADA);
 
     private final BookingRepository repository;
+    private final CatalogStockClient catalogStockClient;
 
-    public BookingService(BookingRepository repository) {
+    public BookingService(BookingRepository repository, CatalogStockClient catalogStockClient) {
         this.repository = repository;
+        this.catalogStockClient = catalogStockClient;
     }
 
     @Transactional
@@ -95,7 +100,17 @@ public class BookingService {
         return repository.findAll(spec).stream().map(BookingResponse::from).toList();
     }
 
-    @Transactional
+    /**
+     * Deliberately NOT {@code @Transactional} at this level (design doc §4's transactional-
+     * boundary note): the {@code SOLICITADA -> APROBADA} branch makes an outbound HTTP call
+     * to catalog between the load and the write, and must never hold a Postgres connection
+     * open across that network round-trip (pool exhaustion risk under load). The load
+     * ({@code repository.findById}) and the write ({@code repository.saveAndFlush}, in both
+     * this method and {@link #approveWithCatalogSaga}) are each already atomic on their own -
+     * every {@code SimpleJpaRepository} method runs in its own short transaction by default -
+     * so no step here needs an enclosing transaction, and no self-invocation/proxy pitfall
+     * arises from that (nothing relies on an enclosing {@code @Transactional} on this class).
+     */
     public BookingResponse updateStatus(UUID id, BookingStatus targetStatus, JwtAuthenticationToken authentication) {
         Booking booking = repository.findById(id).orElseThrow(() -> new BookingNotFoundException(id));
         boolean isEstudiante = isEstudiante(authentication);
@@ -110,16 +125,73 @@ public class BookingService {
             throw new IllegalBookingTransitionException(booking.getStatus(), targetStatus);
         }
 
+        if (booking.getStatus() == BookingStatus.SOLICITADA && targetStatus == BookingStatus.APROBADA) {
+            return approveWithCatalogSaga(booking, authentication);
+        }
+
         BookingStatus fromStatus = booking.getStatus();
         booking.transitionTo(targetStatus);
         // saveAndFlush forces Hibernate's own version-column check (WHERE id=? AND version=?)
-        // to run now, inside this method - the real defense against two concurrent PUTs
-        // both having read the same version and racing to update it (see design doc §3/AC19).
+        // to run now - the real defense against two concurrent PUTs both having read the
+        // same version and racing to update it (see design doc §3/AC19).
         Booking saved = repository.saveAndFlush(booking);
 
         log.info("Booking action=[STATUS_CHANGE] oid=[{}] roles=[{}] id=[{}] fromStatus=[{}] toStatus=[{}]",
                 displayOidOf(authentication), rolesOf(authentication), saved.getId(), fromStatus, saved.getStatus());
         return BookingResponse.from(saved);
+    }
+
+    /**
+     * The one saga edge in this service (design doc §2.1/§3): step 1 is catalog's atomic
+     * decrement (outside any local transaction), step 2 is this booking's local commit.
+     * Catalog's increment is the one compensating transaction, invoked only when step 2
+     * fails after step 1 already succeeded.
+     */
+    private BookingResponse approveWithCatalogSaga(Booking booking, JwtAuthenticationToken authentication) {
+        UUID bookingId = booking.getId();
+        UUID resourceId = booking.getResourceId();
+        String bearerToken = bearerTokenOf(authentication);
+
+        CatalogDecrementOutcome outcome = catalogStockClient.decrement(resourceId, bookingId, bearerToken);
+        log.info("Booking action=[APPROVE_SAGA] oid=[{}] roles=[{}] id=[{}] resourceId=[{}] catalogDecrementResult=[{}]",
+                displayOidOf(authentication), rolesOf(authentication), bookingId, resourceId, outcome);
+
+        switch (outcome) {
+            case INSUFFICIENT_STOCK -> throw new CatalogInsufficientStockException();
+            case NOT_FOUND -> throw new CatalogResourceNotFoundException();
+            case UNREACHABLE, UNEXPECTED_ERROR -> throw new CatalogServiceUnavailableException();
+            case SUCCESS -> { /* proceed to the local commit below */ }
+        }
+
+        try {
+            booking.transitionTo(BookingStatus.APROBADA);
+            Booking saved = repository.saveAndFlush(booking);
+            log.info("Booking action=[STATUS_CHANGE] oid=[{}] roles=[{}] id=[{}] fromStatus=[{}] toStatus=[{}]",
+                    displayOidOf(authentication), rolesOf(authentication), saved.getId(), BookingStatus.SOLICITADA, saved.getStatus());
+            return BookingResponse.from(saved);
+        } catch (ObjectOptimisticLockingFailureException ex) {
+            // Revision 1 (design doc §3 step 2): the local write can lose for two different
+            // reasons, and only one of them warrants compensating. Postgres's row lock on
+            // whichever UPDATE won guarantees its commit is already visible under
+            // read-committed isolation by the time this exact exception is thrown here, so
+            // this plain, non-transactional re-read is safe - no staleness risk.
+            BookingStatus currentStatus = repository.findById(bookingId)
+                    .map(Booking::getStatus)
+                    .orElse(null);
+            if (currentStatus == BookingStatus.APROBADA) {
+                log.info("Booking action=[APPROVE_SAGA] id=[{}] resourceId=[{}] bookingId=[{}] decision=[SKIP_COMPENSATION_DUPLICATE_APPROVAL]",
+                        bookingId, resourceId, bookingId);
+            } else {
+                log.error("Booking action=[APPROVE_COMPENSATION_INVOKED] id=[{}] resourceId=[{}] bookingId=[{}] reason=[LOCAL_OPTIMISTIC_LOCK_LOST]",
+                        bookingId, resourceId, bookingId);
+                boolean compensated = catalogStockClient.increment(resourceId, bookingId, bearerToken);
+                if (!compensated) {
+                    log.error("Booking action=[APPROVE_COMPENSATION_FAILED] id=[{}] resourceId=[{}] bookingId=[{}] reason=[CATALOG_UNREACHABLE_DURING_COMPENSATION]",
+                            bookingId, resourceId, bookingId);
+                }
+            }
+            throw ex;
+        }
     }
 
     private static boolean isLegalTransition(BookingStatus current, BookingStatus target, boolean isEstudiante) {
@@ -164,5 +236,13 @@ public class BookingService {
 
     private static List<String> rolesOf(JwtAuthenticationToken authentication) {
         return authentication.getAuthorities().stream().map(GrantedAuthority::getAuthority).toList();
+    }
+
+    /**
+     * The original caller's own token, forwarded unchanged to catalog (design doc §2.3 - no
+     * token minting, no service credential). Never logged anywhere, including here.
+     */
+    private static String bearerTokenOf(JwtAuthenticationToken authentication) {
+        return "Bearer " + authentication.getToken().getTokenValue();
     }
 }

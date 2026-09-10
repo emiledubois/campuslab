@@ -26,3 +26,9 @@ management:
 oidc:
   issuer-uri: ${OIDC_ISSUER_URI}
   audience: ${OIDC_AUDIENCE}
+
+catalog:
+  service-url: ${CATALOG_SERVICE_URL}
+  client:
+    connect-timeout-ms: ${CATALOG_CLIENT_CONNECT_TIMEOUT_MS:2000}
+    read-timeout-ms: ${CATALOG_CLIENT_READ_TIMEOUT_MS:5000}

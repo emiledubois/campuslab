@@ -120,6 +120,73 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void postDecrement_withEstudianteToken_returns403() throws Exception {
+        given(jwtDecoder.decode("estudiante-token")).willReturn(jwt("estudiante-uuid", List.of("ESTUDIANTE")));
+
+        mockMvc.perform(post("/api/catalog/resources/5f9a5c1e-2a3b-4e10-9c2f-8b6d2b6b0a11/decrement")
+                        .header("Authorization", "Bearer estudiante-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void postDecrement_withAuditorToken_returns403() throws Exception {
+        given(jwtDecoder.decode("auditor-token")).willReturn(jwt("auditor-uuid", List.of("AUDITOR")));
+
+        mockMvc.perform(post("/api/catalog/resources/5f9a5c1e-2a3b-4e10-9c2f-8b6d2b6b0a11/decrement")
+                        .header("Authorization", "Bearer auditor-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void postDecrement_withNoToken_returns401BeforeRoleCheck() throws Exception {
+        mockMvc.perform(post("/api/catalog/resources/5f9a5c1e-2a3b-4e10-9c2f-8b6d2b6b0a11/decrement")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void postDecrement_withTecnicoTokenAndUnknownResource_returns404NotForbidden() throws Exception {
+        given(jwtDecoder.decode("tecnico-token")).willReturn(jwt("tecnico-uuid", List.of("TECNICO")));
+
+        mockMvc.perform(post("/api/catalog/resources/" + java.util.UUID.randomUUID() + "/decrement")
+                        .header("Authorization", "Bearer tecnico-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bookingId\":\"" + java.util.UUID.randomUUID() + "\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void postIncrement_withEstudianteToken_returns403() throws Exception {
+        given(jwtDecoder.decode("estudiante-token")).willReturn(jwt("estudiante-uuid", List.of("ESTUDIANTE")));
+
+        mockMvc.perform(post("/api/catalog/resources/5f9a5c1e-2a3b-4e10-9c2f-8b6d2b6b0a11/increment")
+                        .header("Authorization", "Bearer estudiante-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void postIncrement_withTecnicoTokenAndUnknownResource_returns404NotForbidden() throws Exception {
+        given(jwtDecoder.decode("tecnico-token")).willReturn(jwt("tecnico-uuid", List.of("TECNICO")));
+
+        // No ledger entry exists for this random pair and the resource itself doesn't
+        // exist either, so this reaches the idempotent-replay branch's own resource
+        // lookup and gets 404 - proving the role gate passed rather than blocking with
+        // 403/401 (design doc §2.2/§2.3).
+        mockMvc.perform(post("/api/catalog/resources/" + java.util.UUID.randomUUID() + "/increment")
+                        .header("Authorization", "Bearer tecnico-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bookingId\":\"" + java.util.UUID.randomUUID() + "\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void getActuatorHealth_withNoToken_returns200Up() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())

@@ -88,6 +88,27 @@ public class CatalogResource {
         this.cupo = cupo;
     }
 
+    /** Whichever of {@code stock}/{@code cupo} applies to this resource's type (design doc §4). */
+    public int currentCount() {
+        return resourceType == ResourceType.LABORATORIO ? cupo : stock;
+    }
+
+    public void decrementCount() {
+        if (resourceType == ResourceType.LABORATORIO) {
+            this.cupo = this.cupo - 1;
+        } else {
+            this.stock = this.stock - 1;
+        }
+    }
+
+    public void incrementCount() {
+        if (resourceType == ResourceType.LABORATORIO) {
+            this.cupo = this.cupo + 1;
+        } else {
+            this.stock = this.stock + 1;
+        }
+    }
+
     public UUID getId() {
         return id;
     }

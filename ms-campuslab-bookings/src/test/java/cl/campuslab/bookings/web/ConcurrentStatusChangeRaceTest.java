@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 
 import cl.campuslab.bookings.AbstractIntegrationTest;
+import cl.campuslab.bookings.catalog.StubCatalogServer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -29,6 +30,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 /**
  * AC19: two PUT .../status requests, both reading the same SOLICITADA booking, must
@@ -40,11 +43,22 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
  * Hibernate's optimistic lock check (throwing ObjectOptimisticLockingFailureException,
  * mapped to 409) is what then makes the loser visible as a 409 rather than a
  * silently lost update, same mechanism catalog's own ConcurrentUpdateRaceTest proves.
+ *
+ * <p>Since slice 4, both racing approvals independently call catalog's decrement for
+ * the same booking's resourceId (design doc §7 A04's "same-booking double-approval
+ * race") - wired here against a {@link StubCatalogServer} that always succeeds, so both
+ * decrements commit and the outcome is decided by bookings' own local optimistic lock,
+ * exactly as before. Per Revision 1 (design doc §3 step 2/§9 AC7a), the loser's
+ * re-read finds the booking already APROBADA (the winner's duplicate approval) and
+ * correctly does NOT compensate - the one physical decrement legitimately belongs to
+ * the now-approved booking, asserted below.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ConcurrentStatusChangeRaceTest extends AbstractIntegrationTest {
 
     private static final String RESOURCE_ID = "5f9a5c1e-2a3b-4e10-9c2f-8b6d2b6b0a11";
+
+    private static final StubCatalogServer STUB_CATALOG = new StubCatalogServer();
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -56,6 +70,11 @@ class ConcurrentStatusChangeRaceTest extends AbstractIntegrationTest {
     private JwtDecoder jwtDecoder;
 
     private ExecutorService executor;
+
+    @DynamicPropertySource
+    static void catalogProperties(DynamicPropertyRegistry registry) {
+        registry.add("catalog.service-url", STUB_CATALOG::baseUrl);
+    }
 
     @BeforeEach
     void setUp() {
@@ -109,6 +128,14 @@ class ConcurrentStatusChangeRaceTest extends AbstractIntegrationTest {
         JsonNode loserBody = objectMapper.readTree(loser.getBody());
         assertThat(loserBody.get("detail").asText())
                 .isEqualTo("Booking status was already changed by another request; reload and retry.");
+
+        // Assert: the loser's catalog decrement is NOT compensated (design doc §3/§9
+        // AC7a, Revision 1) - both racers' catalog decrements succeeded (same stub,
+        // abundant stock), so the loser's own re-read after its local optimistic-lock
+        // loss finds the booking already APROBADA (the winner's duplicate approval),
+        // and correctly skips the compensating increment: the one physical decrement
+        // legitimately belongs to the now-approved booking, so net stock stays at -1.
+        assertThat(STUB_CATALOG.incrementCallCount()).isEqualTo(0);
     }
 
     private String createBooking() throws Exception {

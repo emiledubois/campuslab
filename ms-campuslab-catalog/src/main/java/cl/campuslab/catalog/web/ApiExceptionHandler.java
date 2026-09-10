@@ -1,5 +1,6 @@
 package cl.campuslab.catalog.web;
 
+import cl.campuslab.catalog.service.InsufficientStockException;
 import cl.campuslab.catalog.service.InvalidResourceShapeException;
 import cl.campuslab.catalog.service.MalformedResourceIdException;
 import cl.campuslab.catalog.service.ResourceNotFoundException;
@@ -56,6 +57,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
         problem.setTitle("Not Found");
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(problem);
+    }
+
+    @ExceptionHandler(InsufficientStockException.class)
+    public ResponseEntity<ProblemDetail> handleInsufficientStock(InsufficientStockException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Conflict");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
     }
 
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)

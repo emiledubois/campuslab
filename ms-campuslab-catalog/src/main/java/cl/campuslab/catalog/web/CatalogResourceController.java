@@ -4,6 +4,7 @@ import cl.campuslab.catalog.service.CatalogResourceService;
 import cl.campuslab.catalog.service.MalformedResourceIdException;
 import cl.campuslab.catalog.web.dto.CatalogResourceResponse;
 import cl.campuslab.catalog.web.dto.CreateCatalogResourceRequest;
+import cl.campuslab.catalog.web.dto.StockAdjustmentRequest;
 import cl.campuslab.catalog.web.dto.UpdateCatalogResourceRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -51,6 +52,26 @@ public class CatalogResourceController {
             @PathVariable String id, @Valid @RequestBody UpdateCatalogResourceRequest request,
             JwtAuthenticationToken authentication) {
         return service.update(parseId(id), request, authentication);
+    }
+
+    /**
+     * Narrow, purpose-built approval-saga step (design doc §2.2) - not a reuse of {@code PUT}:
+     * bookings sends only a {@code resourceId} (path) and its own {@code bookingId} (the
+     * idempotency key), never catalog's full resource shape or a {@code version} token.
+     */
+    @PostMapping("/{id}/decrement")
+    public CatalogResourceResponse decrement(
+            @PathVariable String id, @Valid @RequestBody StockAdjustmentRequest request,
+            JwtAuthenticationToken authentication) {
+        return service.decrement(parseId(id), request.bookingId(), authentication);
+    }
+
+    /** The saga's compensating step (design doc §2.2/§4) - invoked only by bookings. */
+    @PostMapping("/{id}/increment")
+    public CatalogResourceResponse increment(
+            @PathVariable String id, @Valid @RequestBody StockAdjustmentRequest request,
+            JwtAuthenticationToken authentication) {
+        return service.increment(parseId(id), request.bookingId(), authentication);
     }
 
     private static UUID parseId(String id) {

@@ -29,6 +29,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/catalog/resources").hasAnyRole("ADMIN", "TECNICO")
+                        // Approval-driven stock operations (design doc §2.3): TECNICO/ADMIN, not
+                        // ADMIN-only like general catalog administration below - bookings forwards
+                        // the original TECNICO/ADMIN caller's own token unchanged for these two.
+                        // Must be declared before the exact-path POST rule so they don't silently
+                        // fall through to anyRequest().authenticated() with no role check at all.
+                        .requestMatchers(HttpMethod.POST, "/api/catalog/resources/*/decrement").hasAnyRole("TECNICO", "ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/catalog/resources/*/increment").hasAnyRole("TECNICO", "ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/catalog/resources").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/catalog/resources/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
