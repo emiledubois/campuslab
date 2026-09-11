@@ -99,6 +99,23 @@ describe('ReportsPage', () => {
     expect(within(topResources).getByTestId('top-resource-9c1b1111-2222-3333-4444-555566667777')).toHaveTextContent('3')
   })
 
+  it('omits the range param on the initial fetch so each endpoint applies its own documented default', async () => {
+    const fetchMock = mockFetchFor(['ADMIN'])
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderReportsPage()
+
+    await screen.findByTestId('reservas-por-hora-panel')
+
+    const kpisCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/report/kpis'))
+    const topResourcesCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/report/top-resources'))
+    expect(kpisCalls).toHaveLength(1)
+    expect(topResourcesCalls).toHaveLength(1)
+    expect(String(kpisCalls[0][0])).not.toContain('range=')
+    expect(String(topResourcesCalls[0][0])).not.toContain('range=')
+    expect(String(topResourcesCalls[0][0])).not.toContain('last24h')
+  })
+
   it('re-fetches both endpoints with the selected range', async () => {
     const fetchMock = mockFetchFor(['ADMIN'])
     vi.stubGlobal('fetch', fetchMock)

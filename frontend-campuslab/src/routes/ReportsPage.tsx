@@ -45,6 +45,11 @@ async function errorMessageFor(response: Response, fallback: string): Promise<st
  * so a user who bypassed this client-side check would still get 403 from the server,
  * never real data. Read-only, no filter form (design doc §2/§6) - just a range selector
  * shared by both endpoints, since both accept the same three-value enum.
+ *
+ * The two endpoints document different defaults for an omitted `range` (last24h for
+ * kpis, last7d for top-resources, reporting.md §3). Until the admin actually touches
+ * the shared selector, `range` is omitted from both requests entirely so each endpoint's
+ * own server-side default applies; once changed, that value is sent explicitly to both.
  */
 export function ReportsPage() {
   const { me, isLoading: meLoading } = useMe()
@@ -52,6 +57,7 @@ export function ReportsPage() {
   const canView = roles.includes('ADMIN')
 
   const [range, setRange] = useState<ReportRange>('last24h')
+  const [rangeTouched, setRangeTouched] = useState(false)
   const [kpis, setKpis] = useState<KpisResponse | null>(null)
   const [topResources, setTopResources] = useState<TopResourcesResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -62,14 +68,16 @@ export function ReportsPage() {
     }
     let cancelled = false
 
+    const rangeQuery = rangeTouched ? `?range=${range}` : ''
+
     Promise.all([
-      apiFetch(`/api/report/kpis?range=${range}`).then(async (response) => {
+      apiFetch(`/api/report/kpis${rangeQuery}`).then(async (response) => {
         if (!response.ok) {
           throw new Error(await errorMessageFor(response, `GET /api/report/kpis failed with status ${response.status}`))
         }
         return (await response.json()) as KpisResponse
       }),
-      apiFetch(`/api/report/top-resources?range=${range}`).then(async (response) => {
+      apiFetch(`/api/report/top-resources${rangeQuery}`).then(async (response) => {
         if (!response.ok) {
           throw new Error(
             await errorMessageFor(response, `GET /api/report/top-resources failed with status ${response.status}`),
@@ -94,7 +102,7 @@ export function ReportsPage() {
     return () => {
       cancelled = true
     }
-  }, [meLoading, canView, range])
+  }, [meLoading, canView, range, rangeTouched])
 
   if (meLoading) {
     return null
@@ -119,7 +127,10 @@ export function ReportsPage() {
         <select
           aria-label="Rango"
           value={range}
-          onChange={(event) => setRange(event.target.value as ReportRange)}
+          onChange={(event) => {
+            setRange(event.target.value as ReportRange)
+            setRangeTouched(true)
+          }}
         >
           {RANGES.map((value) => (
             <option key={value} value={value}>
