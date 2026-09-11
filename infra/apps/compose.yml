@@ -92,6 +92,7 @@ services:
       MQ_ADMIN_SERVICE_URL: http://mq-admin:8080
       KAFKA_ADMIN_SERVICE_URL: http://kafka-admin:8080
       AUDIT_SERVICE_URL: http://audit:8080
+      REPORT_SERVICE_URL: http://report:8080
     ports:
       - "8080:8080"
     networks:
@@ -181,6 +182,9 @@ services:
       DB_URL: jdbc:postgresql://report-db:5432/${REPORT_DB_NAME}
       DB_USERNAME: ${REPORT_DB_USER}
       DB_PASSWORD: ${REPORT_DB_PASSWORD}
+      OIDC_ISSUER_URI: ${OIDC_ISSUER_URI}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       report-db:
         condition: service_healthy

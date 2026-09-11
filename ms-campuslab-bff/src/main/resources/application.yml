@@ -33,3 +33,6 @@ kafka-admin:
 
 audit:
   service-url: ${AUDIT_SERVICE_URL}
+
+report:
+  service-url: ${REPORT_SERVICE_URL}

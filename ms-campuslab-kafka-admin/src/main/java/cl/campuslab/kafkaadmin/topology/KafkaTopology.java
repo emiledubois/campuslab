@@ -20,12 +20,17 @@ public final class KafkaTopology {
      * <topic>.<consumer-group-id>.DLT}. Audit's consumer group is {@code audit-service}. */
     public static final String DLT_BOOKINGS_EVENTS_AUDIT_SERVICE = "bookings.events.audit-service.DLT";
 
+    /** Report's consumer group is {@code report-service} (reporting.md §5.1). */
+    public static final String DLT_BOOKINGS_EVENTS_REPORT_SERVICE = "bookings.events.report-service.DLT";
+
     public static final List<TopicSpec> ALL_TOPICS = List.of(
             new TopicSpec(TOPIC_BOOKINGS_EVENTS, 3, TopicConfig.CLEANUP_POLICY_DELETE, 432_000_000L),
             new TopicSpec(TOPIC_AUDIT_TIMELINE, 3, "compact,delete", 1_814_400_000L),
-            new TopicSpec(DLT_BOOKINGS_EVENTS_AUDIT_SERVICE, 3, TopicConfig.CLEANUP_POLICY_DELETE, 864_000_000L));
+            new TopicSpec(DLT_BOOKINGS_EVENTS_AUDIT_SERVICE, 3, TopicConfig.CLEANUP_POLICY_DELETE, 864_000_000L),
+            new TopicSpec(DLT_BOOKINGS_EVENTS_REPORT_SERVICE, 3, TopicConfig.CLEANUP_POLICY_DELETE, 864_000_000L));
 
-    public static final List<String> DLT_NAMES = List.of(DLT_BOOKINGS_EVENTS_AUDIT_SERVICE);
+    public static final List<String> DLT_NAMES =
+            List.of(DLT_BOOKINGS_EVENTS_AUDIT_SERVICE, DLT_BOOKINGS_EVENTS_REPORT_SERVICE);
 
     private KafkaTopology() {
     }

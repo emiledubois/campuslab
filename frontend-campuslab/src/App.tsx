@@ -6,6 +6,7 @@ import { CatalogPage } from './routes/CatalogPage'
 import { DashboardPage } from './routes/DashboardPage'
 import { LoginPage } from './routes/LoginPage'
 import { ProtectedRoute } from './routes/ProtectedRoute'
+import { ReportsPage } from './routes/ReportsPage'
 
 function App() {
   return (
@@ -45,6 +46,14 @@ function App() {
           element={
             <ProtectedRoute>
               <AuditPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports"
+          element={
+            <ProtectedRoute>
+              <ReportsPage />
             </ProtectedRoute>
           }
         />

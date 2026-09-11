@@ -31,3 +31,6 @@ kafka-admin:
 
 audit:
   service-url: http://audit.example.test
+
+report:
+  service-url: http://report.example.test

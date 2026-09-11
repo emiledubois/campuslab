@@ -125,6 +125,48 @@ class SecurityIntegrationTest {
     }
 
     @Test
+    void getReportKpis_withAdminToken_reachesController() throws Exception {
+        given(jwtDecoder.decode("admin-token")).willReturn(jwt("admin-uuid", "admin.test", List.of("ADMIN")));
+
+        // A new path rule (design doc §2/§7 A01) - proven here at the SecurityConfig
+        // layer only; the actual forward/503-mapping behaviour is ReportFacadeControllerTest's.
+        mockMvc.perform(get("/api/report/kpis").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().is5xxServerError()); // no fake report backend wired in this test class
+    }
+
+    @Test
+    void getReportKpis_withAuditorToken_returns403() throws Exception {
+        given(jwtDecoder.decode("auditor-token")).willReturn(jwt("auditor-uuid", "auditor.test", List.of("AUDITOR")));
+
+        // Unlike audit's ADMIN/AUDITOR pair, report's gate is ADMIN-only (design doc
+        // §2/§7 A01, confirmed against §6's pantalla table) - AUDITOR must be rejected.
+        mockMvc.perform(get("/api/report/kpis").header("Authorization", "Bearer auditor-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getTopResources_withAuditorToken_returns403() throws Exception {
+        given(jwtDecoder.decode("auditor-token")).willReturn(jwt("auditor-uuid", "auditor.test", List.of("AUDITOR")));
+
+        mockMvc.perform(get("/api/report/top-resources").header("Authorization", "Bearer auditor-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getReportKpis_withTecnicoRole_returns403() throws Exception {
+        given(jwtDecoder.decode("tecnico-token")).willReturn(jwt("tecnico-uuid", "tecnico.test", List.of("TECNICO")));
+
+        mockMvc.perform(get("/api/report/kpis").header("Authorization", "Bearer tecnico-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getReportKpis_withNoToken_returns401BeforeRoleCheck() throws Exception {
+        mockMvc.perform(get("/api/report/kpis"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void getActuatorHealth_withNoToken_returns200Up() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
