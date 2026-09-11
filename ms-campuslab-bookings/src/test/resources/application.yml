@@ -27,6 +27,14 @@ oidc:
   issuer-uri: https://login.microsoftonline.com/test-tenant/v2.0
   audience: api://test-audience
 
+# Same RFC 5737 TEST-NET-1 reserved-address pattern as spring.rabbitmq.host above - a
+# fast, deterministic publish failure for every test that doesn't override this with a
+# real Testcontainers broker (design doc §9 AC11's "Kafka unreachable" case).
+kafka:
+  bootstrap-servers: 192.0.2.1:65535
+  request-timeout-ms: 300
+  max-block-ms: 300
+
 # Default target for tests that never exercise the approval saga (most of them) - a
 # reserved-for-documentation address (RFC 5737 TEST-NET-1) with nothing listening, so
 # any test that DOES accidentally reach the saga branch fails fast and deterministically

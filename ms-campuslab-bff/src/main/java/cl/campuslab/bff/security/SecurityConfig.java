@@ -41,6 +41,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/bookings").hasAnyRole("ESTUDIANTE", "TECNICO", "ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/bookings/*").hasAnyRole("ESTUDIANTE", "TECNICO", "ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/bookings/*/status").hasAnyRole("ESTUDIANTE", "TECNICO", "ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/audit/**").hasAnyRole("ADMIN", "AUDITOR")
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptionHandling -> exceptionHandling
                         .accessDeniedHandler(restAccessDeniedHandler))

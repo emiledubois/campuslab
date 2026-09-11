@@ -11,3 +11,12 @@ management:
   endpoint:
     health:
       show-details: never
+
+oidc:
+  issuer-uri: ${OIDC_ISSUER_URI}
+  audience: ${OIDC_AUDIENCE}
+
+kafka:
+  bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+  topic:
+    replication-factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:1}

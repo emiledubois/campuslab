@@ -7,6 +7,8 @@ import cl.campuslab.bookings.domain.BookingRepository;
 import cl.campuslab.bookings.domain.BookingSpecifications;
 import cl.campuslab.bookings.domain.BookingStatus;
 import cl.campuslab.bookings.messaging.BookingEventPublisher;
+import cl.campuslab.bookings.messaging.BookingEventStreamPublisher;
+import cl.campuslab.bookings.messaging.BookingStreamEventType;
 import cl.campuslab.bookings.messaging.NotificationType;
 import cl.campuslab.bookings.web.dto.BookingResponse;
 import cl.campuslab.bookings.web.dto.CreateBookingRequest;
@@ -51,12 +53,17 @@ public class BookingService {
     private final BookingRepository repository;
     private final CatalogStockClient catalogStockClient;
     private final BookingEventPublisher eventPublisher;
+    private final BookingEventStreamPublisher eventStreamPublisher;
 
     public BookingService(
-            BookingRepository repository, CatalogStockClient catalogStockClient, BookingEventPublisher eventPublisher) {
+            BookingRepository repository,
+            CatalogStockClient catalogStockClient,
+            BookingEventPublisher eventPublisher,
+            BookingEventStreamPublisher eventStreamPublisher) {
         this.repository = repository;
         this.catalogStockClient = catalogStockClient;
         this.eventPublisher = eventPublisher;
+        this.eventStreamPublisher = eventStreamPublisher;
     }
 
     @Transactional
@@ -71,6 +78,11 @@ public class BookingService {
         Booking saved = repository.save(entity);
 
         log.info("Booking action=[CREATE] oid=[{}] roles=[{}] id=[{}]", studentOid, rolesOf(authentication), saved.getId());
+        // bookings.events is "fuente de verdad de eventos de reserva" (design doc §5.3) -
+        // unlike slice 5's RabbitMQ scope, creation itself is a published event.
+        eventStreamPublisher.publish(
+                BookingStreamEventType.BOOKING_SOLICITADA, saved, null, BookingStatus.SOLICITADA,
+                UUID.randomUUID().toString(), studentOid, rolesOf(authentication));
         return BookingResponse.from(saved);
     }
 
@@ -143,7 +155,13 @@ public class BookingService {
 
         log.info("Booking action=[STATUS_CHANGE] oid=[{}] roles=[{}] id=[{}] fromStatus=[{}] toStatus=[{}]",
                 displayOidOf(authentication), rolesOf(authentication), saved.getId(), fromStatus, saved.getStatus());
-        publishTransitionNotifications(fromStatus, saved.getStatus(), saved);
+        String traceId = UUID.randomUUID().toString();
+        publishTransitionNotifications(fromStatus, saved.getStatus(), saved, traceId);
+        // bookings.events publishes on every legal transition, including CANCELADA
+        // (design doc §5.2/§5.3) - broader than the RabbitMQ scope above.
+        eventStreamPublisher.publish(
+                streamEventTypeFor(saved.getStatus()), saved, fromStatus, saved.getStatus(),
+                traceId, displayOidOf(authentication), rolesOf(authentication));
         return BookingResponse.from(saved);
     }
 
@@ -153,13 +171,25 @@ public class BookingService {
      * (messaging-notify.md §2.2's table) - {@code CANCELADA} and any transition not in
      * this table publish nothing.
      */
-    private void publishTransitionNotifications(BookingStatus fromStatus, BookingStatus toStatus, Booking saved) {
-        String traceId = UUID.randomUUID().toString();
+    private void publishTransitionNotifications(BookingStatus fromStatus, BookingStatus toStatus, Booking saved, String traceId) {
         if (fromStatus == BookingStatus.EN_PREPARACION && toStatus == BookingStatus.EN_USO) {
             eventPublisher.publish(NotificationType.EMAIL_ROOM_READY, saved, fromStatus, toStatus, traceId);
         } else if (fromStatus == BookingStatus.EN_USO && toStatus == BookingStatus.DEVUELTA) {
             eventPublisher.publish(NotificationType.EMAIL_RETURNED, saved, fromStatus, toStatus, traceId);
         }
+    }
+
+    /** Maps a legal target status onto its {@code bookings.events} type (design doc
+     * §5.2) - {@code SOLICITADA} is only ever reached via {@link #create}, never here. */
+    private static BookingStreamEventType streamEventTypeFor(BookingStatus toStatus) {
+        return switch (toStatus) {
+            case APROBADA -> BookingStreamEventType.BOOKING_APROBADA;
+            case EN_PREPARACION -> BookingStreamEventType.BOOKING_EN_PREPARACION;
+            case EN_USO -> BookingStreamEventType.BOOKING_EN_USO;
+            case DEVUELTA -> BookingStreamEventType.BOOKING_DEVUELTA;
+            case CANCELADA -> BookingStreamEventType.BOOKING_CANCELADA;
+            case SOLICITADA -> BookingStreamEventType.BOOKING_SOLICITADA;
+        };
     }
 
     /**
@@ -195,6 +225,12 @@ public class BookingService {
             String traceId = UUID.randomUUID().toString();
             eventPublisher.publish(NotificationType.EMAIL_APPROVED, saved, BookingStatus.SOLICITADA, BookingStatus.APROBADA, traceId);
             eventPublisher.publish(NotificationType.PREP_TICKET_REQUESTED, saved, BookingStatus.SOLICITADA, BookingStatus.APROBADA, traceId);
+            // Only the winning commit ever reaches here (design doc §5.2's concurrent-
+            // approval note) - the losing request's saveAndFlush throws below, before
+            // this line, so exactly one BOOKING_APROBADA is ever published per race.
+            eventStreamPublisher.publish(
+                    BookingStreamEventType.BOOKING_APROBADA, saved, BookingStatus.SOLICITADA, BookingStatus.APROBADA,
+                    traceId, displayOidOf(authentication), rolesOf(authentication));
             return BookingResponse.from(saved);
         } catch (ObjectOptimisticLockingFailureException ex) {
             // Revision 1 (design doc §3 step 2): the local write can lose for two different

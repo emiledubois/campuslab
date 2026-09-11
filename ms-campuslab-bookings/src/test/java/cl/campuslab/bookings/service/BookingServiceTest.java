@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -16,6 +17,8 @@ import cl.campuslab.bookings.domain.Booking;
 import cl.campuslab.bookings.domain.BookingRepository;
 import cl.campuslab.bookings.domain.BookingStatus;
 import cl.campuslab.bookings.messaging.BookingEventPublisher;
+import cl.campuslab.bookings.messaging.BookingEventStreamPublisher;
+import cl.campuslab.bookings.messaging.BookingStreamEventType;
 import cl.campuslab.bookings.messaging.NotificationType;
 import cl.campuslab.bookings.web.dto.BookingResponse;
 import cl.campuslab.bookings.web.dto.CreateBookingRequest;
@@ -46,11 +49,14 @@ class BookingServiceTest {
     @Mock
     private BookingEventPublisher eventPublisher;
 
+    @Mock
+    private BookingEventStreamPublisher eventStreamPublisher;
+
     private BookingService service;
 
     @BeforeEach
     void setUp() {
-        service = new BookingService(repository, catalogStockClient, eventPublisher);
+        service = new BookingService(repository, catalogStockClient, eventPublisher, eventStreamPublisher);
     }
 
     @Test
@@ -65,6 +71,9 @@ class BookingServiceTest {
 
         assertThat(response.studentOid()).isEqualTo("estudiante-oid");
         assertThat(response.status()).isEqualTo(BookingStatus.SOLICITADA);
+        verify(eventStreamPublisher).publish(
+                eq(BookingStreamEventType.BOOKING_SOLICITADA), eq(saved), isNull(), eq(BookingStatus.SOLICITADA),
+                any(), eq("estudiante-oid"), any());
     }
 
     @Test
@@ -180,6 +189,9 @@ class BookingServiceTest {
                 eq(NotificationType.EMAIL_APPROVED), eq(booking), eq(BookingStatus.SOLICITADA), eq(BookingStatus.APROBADA), any());
         verify(eventPublisher).publish(
                 eq(NotificationType.PREP_TICKET_REQUESTED), eq(booking), eq(BookingStatus.SOLICITADA), eq(BookingStatus.APROBADA), any());
+        verify(eventStreamPublisher).publish(
+                eq(BookingStreamEventType.BOOKING_APROBADA), eq(booking), eq(BookingStatus.SOLICITADA), eq(BookingStatus.APROBADA),
+                any(), eq("tecnico-oid"), any());
     }
 
     @Test
@@ -194,6 +206,9 @@ class BookingServiceTest {
         verify(eventPublisher).publish(
                 eq(NotificationType.EMAIL_ROOM_READY), eq(booking), eq(BookingStatus.EN_PREPARACION), eq(BookingStatus.EN_USO), any());
         verify(eventPublisher, times(1)).publish(any(), any(), any(), any(), any());
+        verify(eventStreamPublisher).publish(
+                eq(BookingStreamEventType.BOOKING_EN_USO), eq(booking), eq(BookingStatus.EN_PREPARACION), eq(BookingStatus.EN_USO),
+                any(), eq("tecnico-oid"), any());
     }
 
     @Test
@@ -208,12 +223,17 @@ class BookingServiceTest {
         verify(eventPublisher).publish(
                 eq(NotificationType.EMAIL_RETURNED), eq(booking), eq(BookingStatus.EN_USO), eq(BookingStatus.DEVUELTA), any());
         verify(eventPublisher, times(1)).publish(any(), any(), any(), any(), any());
+        verify(eventStreamPublisher).publish(
+                eq(BookingStreamEventType.BOOKING_DEVUELTA), eq(booking), eq(BookingStatus.EN_USO), eq(BookingStatus.DEVUELTA),
+                any(), eq("tecnico-oid"), any());
     }
 
     @Test
-    void updateStatus_approbadaToEnPreparacion_publishesNothing() {
-        // Not one of the three named triggers (design doc §2.2's table, "aprobación, sala
-        // lista, devolución") - the prep ticket already fired at approval time.
+    void updateStatus_approbadaToEnPreparacion_publishesNoNotificationButDoesPublishStreamEvent() {
+        // Not one of the three named RabbitMQ triggers (design doc §2.2's table,
+        // "aprobación, sala lista, devolución") - the prep ticket already fired at
+        // approval time. bookings.events is broader (design doc §5.2/§9 AC4) and still
+        // publishes this transition.
         UUID id = UUID.randomUUID();
         Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.APROBADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
@@ -222,10 +242,13 @@ class BookingServiceTest {
         service.updateStatus(id, BookingStatus.EN_PREPARACION, staffAuthentication("tecnico-oid", "TECNICO"));
 
         verifyNoInteractions(eventPublisher);
+        verify(eventStreamPublisher).publish(
+                eq(BookingStreamEventType.BOOKING_EN_PREPARACION), eq(booking), eq(BookingStatus.APROBADA), eq(BookingStatus.EN_PREPARACION),
+                any(), eq("tecnico-oid"), any());
     }
 
     @Test
-    void updateStatus_cancellingFromSolicitada_publishesNothing() {
+    void updateStatus_cancellingFromSolicitada_publishesNoNotificationButDoesPublishCanceladaStreamEvent() {
         UUID id = UUID.randomUUID();
         Booking booking = withId(bookingOf("estudiante-oid", BookingStatus.SOLICITADA));
         given(repository.findById(id)).willReturn(Optional.of(booking));
@@ -234,6 +257,9 @@ class BookingServiceTest {
         service.updateStatus(id, BookingStatus.CANCELADA, estudianteAuthentication("estudiante-oid"));
 
         verifyNoInteractions(eventPublisher);
+        verify(eventStreamPublisher).publish(
+                eq(BookingStreamEventType.BOOKING_CANCELADA), eq(booking), eq(BookingStatus.SOLICITADA), eq(BookingStatus.CANCELADA),
+                any(), eq("estudiante-oid"), any());
     }
 
     @Test
@@ -321,9 +347,10 @@ class BookingServiceTest {
                 .isInstanceOf(ObjectOptimisticLockingFailureException.class);
         verify(catalogStockClient, never()).increment(any(), any(), any());
         // The losing request in a concurrent-approval race never reaches the publish
-        // hook (design doc §2.2's table, last row / §9 AC15) - only the winner's own
-        // saveAndFlush succeeds and gets to publish.
+        // hook (design doc §2.2's table, last row / kafka-audit.md §9 AC12) - only the
+        // winner's own saveAndFlush succeeds and gets to publish, to either broker.
         verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(eventStreamPublisher);
     }
 
     @Test
@@ -347,6 +374,7 @@ class BookingServiceTest {
                 .isInstanceOf(ObjectOptimisticLockingFailureException.class);
         verify(catalogStockClient, times(1)).increment(eq(resourceId), eq(id), any());
         verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(eventStreamPublisher);
     }
 
     @Test

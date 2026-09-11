@@ -39,6 +39,9 @@ oidc:
   issuer-uri: ${OIDC_ISSUER_URI}
   audience: ${OIDC_AUDIENCE}
 
+kafka:
+  bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+
 catalog:
   service-url: ${CATALOG_SERVICE_URL}
   client:

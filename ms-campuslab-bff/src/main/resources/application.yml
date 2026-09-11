@@ -27,3 +27,9 @@ bookings:
 
 mq-admin:
   service-url: ${MQ_ADMIN_SERVICE_URL}
+
+kafka-admin:
+  service-url: ${KAFKA_ADMIN_SERVICE_URL}
+
+audit:
+  service-url: ${AUDIT_SERVICE_URL}

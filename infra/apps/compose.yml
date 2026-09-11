@@ -90,6 +90,8 @@ services:
       CATALOG_SERVICE_URL: http://catalog:8080
       BOOKINGS_SERVICE_URL: http://bookings:8080
       MQ_ADMIN_SERVICE_URL: http://mq-admin:8080
+      KAFKA_ADMIN_SERVICE_URL: http://kafka-admin:8080
+      AUDIT_SERVICE_URL: http://audit:8080
     ports:
       - "8080:8080"
     networks:
@@ -118,6 +120,7 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: ${RABBITMQ_USER}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       bookings-db:
         condition: service_healthy
@@ -198,6 +201,9 @@ services:
       DB_URL: jdbc:postgresql://audit-db:5432/${AUDIT_DB_NAME}
       DB_USERNAME: ${AUDIT_DB_USER}
       DB_PASSWORD: ${AUDIT_DB_PASSWORD}
+      OIDC_ISSUER_URI: ${OIDC_ISSUER_URI}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       audit-db:
         condition: service_healthy
@@ -235,6 +241,10 @@ services:
       dockerfile: Dockerfile
     environment:
       SERVER_PORT: 8080
+      OIDC_ISSUER_URI: ${OIDC_ISSUER_URI}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_REPLICATION_FACTOR: ${KAFKA_TOPIC_REPLICATION_FACTOR}
     networks:
       - campuslab-net
     healthcheck:

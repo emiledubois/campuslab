@@ -5,6 +5,11 @@ spring:
     url: ${DB_URL}
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
+    hikari:
+      # Short enough that a failed connection attempt doesn't dominate the retry
+      # loop's own ~1s cadence (FixedBackOff(1000, 2), §5.4) - Hikari's 30s default
+      # would otherwise stretch each retry attempt to ~30s of wall-clock time.
+      connection-timeout: 800
   jpa:
     hibernate:
       ddl-auto: none
@@ -22,3 +27,10 @@ management:
   endpoint:
     health:
       show-details: never
+
+oidc:
+  issuer-uri: ${OIDC_ISSUER_URI}
+  audience: ${OIDC_AUDIENCE}
+
+kafka:
+  bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}

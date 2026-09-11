@@ -25,3 +25,9 @@ bookings:
 
 mq-admin:
   service-url: http://mq-admin.example.test
+
+kafka-admin:
+  service-url: http://kafka-admin.example.test
+
+audit:
+  service-url: http://audit.example.test

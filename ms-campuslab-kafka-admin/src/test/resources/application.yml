@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: ms-campuslab-kafka-admin
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+oidc:
+  issuer-uri: https://login.microsoftonline.com/test-tenant/v2.0
+  audience: api://test-audience
+
+kafka:
+  bootstrap-servers: localhost:9092
+  topic:
+    replication-factor: 1

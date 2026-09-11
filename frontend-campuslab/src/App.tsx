@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { AuditPage } from './routes/AuditPage'
 import { AuthCallbackPage } from './routes/AuthCallbackPage'
 import { BookingsPage } from './routes/BookingsPage'
 import { CatalogPage } from './routes/CatalogPage'
@@ -36,6 +37,14 @@ function App() {
           element={
             <ProtectedRoute>
               <BookingsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/audit"
+          element={
+            <ProtectedRoute>
+              <AuditPage />
             </ProtectedRoute>
           }
         />
