@@ -95,6 +95,19 @@ services:
       REPORT_SERVICE_URL: http://report:8080
     ports:
       - "8080:8080"
+    depends_on:
+      catalog:
+        condition: service_healthy
+      bookings:
+        condition: service_healthy
+      mq-admin:
+        condition: service_healthy
+      kafka-admin:
+        condition: service_healthy
+      audit:
+        condition: service_healthy
+      report:
+        condition: service_healthy
     networks:
       - campuslab-net
     healthcheck:
@@ -124,6 +137,14 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       bookings-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mq-admin:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-admin:
         condition: service_healthy
     networks:
       - campuslab-net
@@ -165,6 +186,11 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USER: ${RABBITMQ_USER}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mq-admin:
+        condition: service_healthy
     networks:
       - campuslab-net
     healthcheck:
@@ -187,6 +213,10 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       report-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-admin:
         condition: service_healthy
     networks:
       - campuslab-net
@@ -211,6 +241,10 @@ services:
     depends_on:
       audit-db:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-admin:
+        condition: service_healthy
     networks:
       - campuslab-net
     healthcheck:
@@ -231,6 +265,9 @@ services:
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
       OIDC_ISSUER_URI: ${OIDC_ISSUER_URI}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     networks:
       - campuslab-net
     healthcheck:
@@ -249,6 +286,9 @@ services:
       OIDC_AUDIENCE: ${OIDC_AUDIENCE}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC_REPLICATION_FACTOR: ${KAFKA_TOPIC_REPLICATION_FACTOR}
+    depends_on:
+      kafka:
+        condition: service_healthy
     networks:
       - campuslab-net
     healthcheck:

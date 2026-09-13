@@ -1,0 +1,39 @@
+# Demo-readiness.md §2/§3/Decision 2 - a small, standalone JWKS/discovery test double
+# used exclusively by scripts/seed.sh and scripts/verify-seed.sh, never merged into the
+# demo's own startup command (scripts/cold-start.sh only ever passes -f infra/mq,
+# -f infra/kafka, -f infra/apps - never this file, see AC8's own grep check). Not one of
+# the eight microservices, not in CLAUDE.md's roadmap, never reachable by the frontend
+# or MSAL. Unconditionally local-only: no "local"/"deploy" profile split, no deploy-profile
+# form at all.
+networks:
+  campuslab-net:
+    external: true
+
+volumes:
+  # Review iteration 2, finding 1: named volume, scoped to this compose file only, never
+  # a bind mount, never checked into git (Docker manages its storage outside the repo
+  # tree) - lets mock-jwks reuse the same RSA key/kid across its own container restarts
+  # so an already-running app stack's cached JWKS response stays valid for tokens minted
+  # by a later mock-jwks instance.
+  mock-jwks-keys:
+
+services:
+  mock-jwks:
+    build:
+      context: ./mock-jwks
+      dockerfile: Dockerfile
+    environment:
+      MOCK_JWKS_PORT: 1080
+      MOCK_JWKS_ISSUER: http://mock-jwks:1080/mock-tenant/v2.0
+      MOCK_JWKS_AUDIENCE: api://mock-audience
+      MOCK_JWKS_KEY_PATH: /keys/private_key.pem
+    ports:
+      # The one deliberate, narrow, precedented exception (§7 A05) - scripts/seed.sh and
+      # scripts/verify-seed.sh run on the host and must reach this container to mint
+      # tokens, the same already-accepted precedent as RabbitMQ's/Kafka's own local-profile
+      # management UIs.
+      - "${MOCK_JWKS_PORT:-1080}:1080"
+    volumes:
+      - mock-jwks-keys:/keys
+    networks:
+      - campuslab-net

@@ -10,7 +10,13 @@ management:
         include: health,info
   endpoint:
     health:
-      show-details: never
+      # 'always', not 'never' (unauthenticated permitAll surface already, unchanged):
+      # demo-readiness.md's TopologyHealthIndicator only matters if components.topology
+      # is actually visible in the response Compose/AC3 inspect. Safe specifically because
+      # this service never publishes a host port (infra/apps/compose.yml) - /actuator/health
+      # is only reachable from other containers on campuslab-net, never from the host or
+      # the internet (review iteration 1, finding 4).
+      show-details: always
 
 oidc:
   issuer-uri: ${OIDC_ISSUER_URI}

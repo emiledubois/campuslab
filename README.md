@@ -57,11 +57,16 @@ El camino de llamada es siempre: navegador → API Gateway → `ms-campuslab-bff
 ## Requisitos previos
 
 - **Java 21** y **Docker + Docker Compose** (probado con Docker 29.7 / Compose v5).
-- **Red compartida de Docker (una sola vez)**: `infra/apps/compose.yml` e `infra/mq/compose.yml` se levantan como dos invocaciones independientes de `docker compose -f`, cada una en su propia red por defecto — sin una red compartida, `mq-admin`/`notify`/`bookings` (en `apps`) no podrian resolver `rabbitmq` (en `mq`) por nombre de host (slice 5, `docs/designs/messaging-notify.md` §7 A05). Antes del primer `docker compose up` de cualquiera de los dos archivos:
+- **Red compartida de Docker (una sola vez)**: los tres archivos de compose (`infra/mq`,
+  `infra/kafka`, `infra/apps`) declaran `campuslab-net` como `external: true` — sin ella,
+  `mq-admin`/`notify`/`bookings` no podrian resolver `rabbitmq`/`kafka` por nombre de host
+  (slice 5, `docs/designs/messaging-notify.md` §7 A05). `scripts/cold-start.sh` (ver mas
+  abajo) la crea automaticamente si todavia no existe, pero tambien se puede crear a mano
+  una sola vez por maquina/host:
   ```bash
   docker network create campuslab-net
   ```
-  Se crea una sola vez por maquina/host; no la crea ningun `docker compose up` — si se corre `docker compose down` en un archivo, la red sigue en pie para el otro.
+  No la crea ningun `docker compose up`/`down` — sigue en pie entre reinicios del stack.
 - **Node.js** para el frontend. *Nota:* en esta maquina el `node` del sistema esta roto (falta `libada.so.3`, aparentemente por una actualizacion parcial de paquetes de Arch). Se instalo Node LTS de forma aislada via `nvm` en `~/.nvm` (sin tocar paquetes del sistema); para usarlo:
   ```bash
   source ~/.nvm/nvm.sh
@@ -77,33 +82,112 @@ Cada paso fue efectivamente levantado y verificado durante el scaffolding (no so
 
 2. **Identidad (Entra ID)** — no hay proveedor de identidad local (`docs/DECISIONES_PROFESOR.md` #6): Entra ID es el unico emisor, en todo entorno, incluido el desarrollo local. No hay nada que levantar aqui; `OIDC_ISSUER_URI`/`OIDC_AUDIENCE` apuntan al tenant real de Entra (ver `docs/ENTRA_SETUP.md`). Los tests automatizados firman sus propios JWT contra un JWKS simulado (no llaman a Entra) — ver `docs/designs/entra-migration.md`.
 
-3. **RabbitMQ** (perfil `local`, un solo nodo + Management UI):
+3. **RabbitMQ + Kafka + los ocho microservicios + sus bases de datos, en un solo comando**
+   (`docs/designs/demo-readiness.md` Decision 1):
    ```bash
-   docker compose --env-file .env -f infra/mq/compose.yml --profile local up -d
+   ./scripts/cold-start.sh
    ```
-   Management UI en `http://localhost:15672`. El perfil `deploy` levanta un cluster real de 2 nodos (`rabbitmq-1`/`rabbitmq-2`) sin publicar la UI de administracion.
-
-4. **Kafka** (perfil `local`, Zookeeper + 1 broker + Kafka UI):
+   Equivalente a (y exactamente lo que el script ejecuta):
    ```bash
-   docker compose --env-file .env -f infra/kafka/compose.yml --profile local up -d
+   docker compose --env-file .env \
+     -f infra/mq/compose.yml \
+     -f infra/kafka/compose.yml \
+     -f infra/apps/compose.yml \
+     --profile local up -d --build
    ```
-   Kafka UI en `http://localhost:8082`. El perfil `deploy` levanta 3 Zookeeper + 3 brokers (replicacion real verificada) sin publicar la UI.
+   Compose fusiona los tres archivos en **un solo proyecto**, asi que `depends_on:
+   condition: service_healthy` funciona entre archivos exactamente igual que dentro de
+   uno solo — `mq-admin`/`kafka-admin` (los unicos dueños de la topologia RabbitMQ/Kafka)
+   dependen de `rabbitmq`/`kafka` estar sanos; `notify`/`bookings` dependen ademas de que
+   `mq-admin`/`kafka-admin` esten sanos; `audit`/`report` dependen de `kafka-admin`; `bff`
+   depende de todo lo anterior. Cada uno de los dos servicios admin expone un
+   `TopologyHealthIndicator` propio (`GET /actuator/health`, `components.topology`) que
+   reporta `DOWN` hasta que su propia logica de declarar+verificar topologia (slices 5/6,
+   sin cambios) haya terminado con exito al menos una vez — asi "Compose dice que
+   mq-admin/kafka-admin estan sanos" significa realmente "la topologia ya existe", no solo
+   "la JVM arranco". Esto es lo que cierra, de forma estructural, la carrera que el
+   informe de QA de la slice 5 habia señalado (tres invocaciones de compose separadas, sin
+   `depends_on` entre ellas) — ver `docs/designs/demo-readiness.md` para la evidencia real
+   (10 ciclos en frio reproduciendo la carrera con la topologia vieja, 10 ciclos mas
+   probando que ya no ocurre con esta).
 
-   Ni RabbitMQ ni Kafka declaran colas/topicos todavia — eso lo hacen `ms-campuslab-mq-admin` y `ms-campuslab-kafka-admin` respectivamente, en una etapa posterior.
+   RabbitMQ Management UI en `http://localhost:15672`, Kafka UI en `http://localhost:8082`.
+   Solo `ms-campuslab-bff` publica un puerto de aplicacion al host (`8080`) — es el unico
+   punto de entrada publico. Ningun otro microservicio (bookings, catalog, notify, report,
+   audit, mq-admin, kafka-admin) es alcanzable desde el host; solo entre contenedores de la
+   misma red de compose. Verificar: `curl http://localhost:8080/actuator/health` debe
+   devolver `{"status":"UP"}`.
 
-5. **Los ocho microservicios + sus bases de datos**:
+   El perfil `deploy` (no usado por `cold-start.sh`, que siempre usa `local`) levanta la
+   topologia real del caso: RabbitMQ 2 nodos, Zookeeper 3 nodos + Kafka 3 brokers,
+   replicacion real — sin publicar ninguna UI de administracion.
+
+4. **Datos de demo (opcional, recomendado antes de una presentacion; es un flujo local
+   distinto del arranque real del paso 3, nunca combinado con el)**:
+
+   Este flujo crea reservas *a traves de la API real* (`POST /api/bookings` /
+   `PUT /api/bookings/{id}/status` via el BFF) para cubrir los seis estados del ciclo de
+   vida (`SOLICITADA`, `APROBADA`, `EN_PREPARACION`, `EN_USO`, `DEVUELTA`, `CANCELADA`),
+   asi que `/audit` y `/reports` tengan datos reales derivados del stream de eventos, no
+   solo `/bookings`. Para autenticar esas llamadas sin depender de un login real contra
+   Entra (ROPC esta descartado — incompatible con MFA), se usa un doble de pruebas
+   JWKS/discovery minimo y autocontenido, definido en `infra/testing/` (compose propio,
+   **nunca** fusionado a `scripts/cold-start.sh` — ver `docs/designs/demo-readiness.md`
+   §9 AC8) que firma JWT locales con el mismo formato de claims que Entra. Ver
+   `docs/designs/demo-readiness.md` Decision 2 para el analisis completo de por que esto
+   no viola `docs/DECISIONES_PROFESOR.md` #6.
+
+   Requiere que, **solo para esta sesion de siembra/ensayo local**, `.env` tenga
+   `OIDC_ISSUER_URI`/`OIDC_AUDIENCE` apuntando al doble de pruebas en vez de al tenant
+   real de Entra — los valores exactos son los que `infra/testing/compose.yml` fija por
+   defecto para ese doble de pruebas (variables `MOCK_JWKS_ISSUER`/`MOCK_JWKS_AUDIENCE`
+   en ese archivo; el script de abajo falla con un mensaje explicito si `.env` no
+   coincide). Es una configuracion distinta de la usada para el login real via MSAL en
+   la presentacion, que siempre apunta al tenant real, sin excepcion. Un unico comando
+   ejecuta la secuencia correcta de principio a fin:
    ```bash
-   docker compose --env-file .env -f infra/apps/compose.yml up -d --build
+   ./scripts/seed-demo-data.sh
    ```
-   Solo `ms-campuslab-bff` publica un puerto al host (`8080`) — es el unico punto de entrada publico. Ningun otro servicio (bookings, catalog, notify, report, audit, mq-admin, kafka-admin) es alcanzable desde el host; solo entre contenedores de la misma red de compose. Verificar: `curl http://localhost:8080/actuator/health` debe devolver `{"status":"UP"}`.
+   Ese script (i) arranca el doble de pruebas JWKS/discovery primero y espera a que
+   responda; (ii) recien entonces levanta el stack completo (`scripts/cold-start.sh`) —
+   arrancarlo antes de tener ese doble de pruebas arriba haria que cada servicio con
+   OIDC configurado fallara al iniciar (descubrimiento OIDC eager contra un host
+   inexistente); (iii) corre `scripts/seed.sh` (SQL directo e idempotente contra
+   `catalog-db`, mas las reservas via API real); (iv) corre `scripts/verify-seed.sh`
+   (relee todo lo sembrado a traves del BFF real, mintiendo sus propios tokens
+   `ADMIN`/`TECNICO`/`ESTUDIANTE`/`AUDITOR`). El doble de pruebas se mantiene como un
+   unico proceso, sin reinicios intermedios, durante las cuatro etapas — reiniciarlo a
+   mitad de sesion regeneraria su clave RSA bajo el mismo `kid` y las firmas ya
+   cacheadas por los servicios dejarian de validar — y se apaga al terminar el script
+   (exito o error).
 
-6. **Frontend**:
+5. **Frontend**:
    ```bash
    cd frontend-campuslab
    npm install
    npm run dev
    ```
    Sirve en `http://localhost:5173` (coincide con el `redirectUri` configurado en el registro de aplicacion SPA de Entra ID, ver `docs/ENTRA_SETUP.md`).
+
+### Tiempo de arranque en frío
+
+Medido por `scripts/measure-cold-boot.sh` (`docs/designs/demo-readiness.md` Decision 3):
+arranque = el instante en que se invoca `scripts/cold-start.sh`, inmediatamente precedido
+por un `down -v` real (contenedores **y** volúmenes con nombre) sobre los tres archivos de
+compose, de modo que Postgres vuelve a correr todas las migraciones Flyway desde cero y
+RabbitMQ/Kafka recrean su topología desde nada. Fin = el primer instante en que **ambas**
+condiciones son verdaderas: (1) todos los contenedores que el `up` fusionado arrancó
+reportan `healthy` (o `running`, para el único sin healthcheck hoy, `kafka-ui`); **y** (2)
+un round-trip autenticado real tiene éxito de punta a punta: `GET /api/me` contra el puerto
+publicado de la BFF, con un token `ESTUDIANTE` firmado por el doble de pruebas JWKS de
+`infra/testing/`, devuelve `200` con el `oid`/`roles` de ese token reflejados
+correctamente. Se registra al conectar el stack local (perfil `local`) a esta misma
+configuración de prueba (nunca al tenant real de Entra) — ver ese script para el detalle
+exacto. Tabla append-only: cada nueva medición se agrega, nunca reemplaza una anterior.
+
+| Fecha | Máquina | Segundos | Commit |
+|---|---|---|---|
+| 2026-09-11 | Linux (CachyOS), 88 vCPU, 46 GiB RAM, Docker 29.7.2 / Compose v5.5.0, imágenes ya construidas en caché local (`docker compose ... up -d --build` con capas cacheadas) | 67.2 | e30a60b |
 
 ## Correr un microservicio individual fuera de Docker
 
