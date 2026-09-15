@@ -136,6 +136,14 @@ public class KafkaConsumerConfig {
         factory.setConsumerFactory(auditConsumerFactory);
         factory.setCommonErrorHandler(auditErrorHandler);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
+        // Container construction against an unresolvable broker throws synchronously during
+        // ApplicationContext refresh (design doc Part 9) - autoStartup(false) defers that until
+        // KafkaListenerStartupRetryTask starts it once the broker is reachable. Sufficient on
+        // its own for this codebase's statically-declared @KafkaListener beans (registered via
+        // registerAllEndpoints() before ContextRefreshedEvent); KafkaListenerEndpointRegistry's
+        // alwaysStartAfterRefresh only overrides autoStartup for endpoints registered *after*
+        // refresh, which this codebase never does.
+        factory.setAutoStartup(false);
         return factory;
     }
 }

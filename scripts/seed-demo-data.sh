@@ -35,6 +35,18 @@ if [ ! -f "$ENV_FILE" ]; then
     exit 1
 fi
 
+# QA iteration 1, finding 1: this script does not read SEED_*_OID itself, but it is the
+# parent process for scripts/seed.sh (line 96) and scripts/verify-seed.sh (line 99) below -
+# `set -a; source "$ENV_FILE"` would otherwise re-export these four vars as "" into THIS
+# process's own environment, which both children then inherit verbatim, discarding whatever
+# the operator exported in their own shell before invoking this script. Capture/restore
+# around the source, identical pattern to scripts/seed.sh's own fix, so the value handed
+# down to both children is the operator's real override, not .env's blank default line.
+_PRESET_SEED_ADMIN_OID="${SEED_ADMIN_OID:-}"
+_PRESET_SEED_TECNICO_OID="${SEED_TECNICO_OID:-}"
+_PRESET_SEED_STUDENT_OID="${SEED_STUDENT_OID:-}"
+_PRESET_SEED_AUDITOR_OID="${SEED_AUDITOR_OID:-}"
+
 # Review iteration 1, finding 2: the same explicit project name scripts/cold-start.sh,
 # scripts/seed.sh and scripts/measure-cold-boot.sh all pin, inherited by every
 # subprocess this script invokes below.
@@ -44,6 +56,10 @@ set -a
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 set +a
+[ -n "$_PRESET_SEED_ADMIN_OID" ] && export SEED_ADMIN_OID="$_PRESET_SEED_ADMIN_OID"
+[ -n "$_PRESET_SEED_TECNICO_OID" ] && export SEED_TECNICO_OID="$_PRESET_SEED_TECNICO_OID"
+[ -n "$_PRESET_SEED_STUDENT_OID" ] && export SEED_STUDENT_OID="$_PRESET_SEED_STUDENT_OID"
+[ -n "$_PRESET_SEED_AUDITOR_OID" ] && export SEED_AUDITOR_OID="$_PRESET_SEED_AUDITOR_OID"
 
 BFF_URL="${BFF_URL:-http://localhost:8080}"
 

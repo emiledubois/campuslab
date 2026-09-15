@@ -26,6 +26,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   catalog-db:
     image: postgres:16-alpine
@@ -42,6 +43,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   report-db:
     image: postgres:16-alpine
@@ -58,6 +60,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   audit-db:
     image: postgres:16-alpine
@@ -74,6 +77,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   # --- Spring Boot services. Only the BFF is published to the host - it is the
   # only public entry point per CLAUDE.md's non-negotiable call path. Every other
@@ -115,6 +119,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   bookings:
     build:
@@ -130,22 +135,26 @@ services:
       CATALOG_SERVICE_URL: http://catalog:8080
       CATALOG_CLIENT_CONNECT_TIMEOUT_MS: ${CATALOG_CLIENT_CONNECT_TIMEOUT_MS:-2000}
       CATALOG_CLIENT_READ_TIMEOUT_MS: ${CATALOG_CLIENT_READ_TIMEOUT_MS:-5000}
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
       RABBITMQ_USER: ${RABBITMQ_USER}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
     depends_on:
       bookings-db:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       mq-admin:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
+        condition: service_started
       kafka-admin:
-        condition: service_healthy
+        condition: service_started
+    # rabbitmq / kafka entries removed (Part 6) - redundant with mq-admin/kafka-admin above,
+    # which cannot report "healthy" until each broker is actually reachable and this
+    # service's own topology is verified (see rationale above).
+    # mq-admin/kafka-admin downgraded to service_started (Part 8) - their job for this service
+    # is topology verification/reporting, not connection gatekeeping; RabbitPublisherConfig /
+    # KafkaConsumerConfig / KafkaProducerConfig already tolerate an absent broker via their own
+    # framework-level retry, so waiting on mq-admin/kafka-admin's own health here only exposes
+    # this service to their widened start_period stall for no benefit.
     networks:
       - campuslab-net
     healthcheck:
@@ -153,6 +162,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   catalog:
     build:
@@ -175,6 +185,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   notify:
     build:
@@ -182,15 +193,15 @@ services:
       dockerfile: Dockerfile
     environment:
       SERVER_PORT: 8080
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
       RABBITMQ_USER: ${RABBITMQ_USER}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       mq-admin:
-        condition: service_healthy
+        condition: service_started
+    # rabbitmq entry removed (Part 6) - redundant with mq-admin above.
+    # mq-admin downgraded to service_started (Part 8) - see bookings' identical note above.
     networks:
       - campuslab-net
     healthcheck:
@@ -198,6 +209,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   report:
     build:
@@ -210,14 +222,14 @@ services:
       DB_PASSWORD: ${REPORT_DB_PASSWORD}
       OIDC_ISSUER_URI: ${OIDC_ISSUER_URI}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
     depends_on:
       report-db:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
       kafka-admin:
-        condition: service_healthy
+        condition: service_started
+    # kafka entry removed (Part 6) - redundant with kafka-admin above.
+    # kafka-admin downgraded to service_started (Part 8) - see bookings' identical note above.
     networks:
       - campuslab-net
     healthcheck:
@@ -225,6 +237,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   audit:
     build:
@@ -237,14 +250,14 @@ services:
       DB_PASSWORD: ${AUDIT_DB_PASSWORD}
       OIDC_ISSUER_URI: ${OIDC_ISSUER_URI}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
     depends_on:
       audit-db:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
       kafka-admin:
-        condition: service_healthy
+        condition: service_started
+    # kafka entry removed (Part 6) - redundant with kafka-admin above.
+    # kafka-admin downgraded to service_started (Part 8) - see bookings' identical note above.
     networks:
       - campuslab-net
     healthcheck:
@@ -252,6 +265,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   mq-admin:
     build:
@@ -259,15 +273,14 @@ services:
       dockerfile: Dockerfile
     environment:
       SERVER_PORT: 8080
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
       RABBITMQ_USER: ${RABBITMQ_USER}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
       OIDC_ISSUER_URI: ${OIDC_ISSUER_URI}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE}
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
+    # depends_on block removed entirely (Part 6) - its only prior entry was `rabbitmq`, its
+    # sole upstream. Relies on TopologyHealthIndicator's own scheduled retry+latch instead.
     networks:
       - campuslab-net
     healthcheck:
@@ -275,6 +288,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 240s
+    restart: unless-stopped
 
   kafka-admin:
     build:
@@ -284,11 +299,10 @@ services:
       SERVER_PORT: 8080
       OIDC_ISSUER_URI: ${OIDC_ISSUER_URI}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       KAFKA_TOPIC_REPLICATION_FACTOR: ${KAFKA_TOPIC_REPLICATION_FACTOR}
-    depends_on:
-      kafka:
-        condition: service_healthy
+    # depends_on block removed entirely (Part 6) - its only prior entry was `kafka`, its sole
+    # upstream. Relies on TopologyHealthIndicator's own scheduled retry+latch instead.
     networks:
       - campuslab-net
     healthcheck:
@@ -296,6 +310,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 240s
+    restart: unless-stopped
 
 volumes:
   bookings-db-data:

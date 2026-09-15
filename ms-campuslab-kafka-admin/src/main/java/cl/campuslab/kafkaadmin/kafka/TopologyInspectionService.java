@@ -18,6 +18,7 @@ import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.TopicExistsException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 /**
@@ -43,7 +44,7 @@ public class TopologyInspectionService {
     private final KafkaReachabilityChecker reachabilityChecker;
 
     public TopologyInspectionService(
-            Admin adminClient, KafkaAdminProperties properties, KafkaReachabilityChecker reachabilityChecker) {
+            @Lazy Admin adminClient, KafkaAdminProperties properties, KafkaReachabilityChecker reachabilityChecker) {
         this.adminClient = adminClient;
         this.properties = properties;
         this.reachabilityChecker = reachabilityChecker;

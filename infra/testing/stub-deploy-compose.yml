@@ -1,0 +1,17 @@
+# docs/designs/aws-deployment.md Part 4 - a minimal Flask double standing in for "the
+# deployed BFF, mq-admin, and kafka-admin" so scripts/verify-deploy-selftest.sh can
+# prove scripts/verify-deploy.sh's own request/response/reporting logic without AWS or
+# Entra. Its own compose project (campuslab-stub-deploy, set via `-p` by whichever
+# script starts it - same pattern as infra/testing/compose.yml/mock-jwks), own port
+# (1081 by default), unconditionally local-only: no "local"/"deploy" profile split,
+# never merged into scripts/cold-start.sh or any real profile.
+services:
+  stub-deploy:
+    build:
+      context: ./stub-deploy
+      dockerfile: Dockerfile
+    environment:
+      STUB_DEPLOY_PORT: 1081
+      STUB_EXPECTED_TOKEN: ${STUB_EXPECTED_TOKEN:-stub-fixed-token-for-selftest-only}
+    ports:
+      - "${STUB_DEPLOY_PORT:-1081}:1081"

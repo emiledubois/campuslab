@@ -84,10 +84,14 @@ require_mock_jwks_running() {
 mint_token() {
     local role="$1"
     local oid="$2"
-    local response
+    local body response
+    # A03: jq -n --arg, never raw string interpolation - oid can now come from an
+    # operator-supplied SEED_*_OID env var (docs/designs/aws-deployment.md Part 3), so a
+    # value accidentally containing a `"` or `\` must not corrupt this JSON payload.
+    body="$(jq -n --arg role "$role" --arg oid "$oid" '{role: $role, oid: $oid}')"
     response="$(curl -sf -X POST "${MOCK_JWKS_URL}/mint" \
         -H "Content-Type: application/json" \
-        -d "{\"role\":\"${role}\",\"oid\":\"${oid}\"}")"
+        -d "$body")"
     echo "mint_token: outcome=[MINTED] role=[${role}] oid=[${oid}]" >&2
     echo "$response" | jq -r '.token'
 }

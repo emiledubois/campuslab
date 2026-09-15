@@ -23,10 +23,21 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "seed: $ENV_FILE not found - copy .env.example to .env and fill it in first" >&2
     exit 1
 fi
+
+# QA iteration 1, finding 1: .env(.example) ships SEED_*_OID as present-but-blank lines -
+# sourcing it unconditionally below would re-export each to "", which ${VAR:-default} below
+# treats as unset, silently discarding whatever the operator exported in their own shell
+# before running this script. Capture any pre-source value now; restore it after the source,
+# only if it was actually non-empty, so the common case (no override, .env's blank line
+# supplies the real default) is untouched.
+_PRESET_SEED_STUDENT_OID="${SEED_STUDENT_OID:-}"
+_PRESET_SEED_TECNICO_OID="${SEED_TECNICO_OID:-}"
 set -a
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 set +a
+[ -n "$_PRESET_SEED_STUDENT_OID" ] && export SEED_STUDENT_OID="$_PRESET_SEED_STUDENT_OID"
+[ -n "$_PRESET_SEED_TECNICO_OID" ] && export SEED_TECNICO_OID="$_PRESET_SEED_TECNICO_OID"
 
 # Review iteration 1, finding 2: same explicit project name as scripts/cold-start.sh,
 # used below to find the real catalog-db container regardless of which directory the
@@ -41,8 +52,18 @@ COMPOSE_FILES=(-f "${REPO_ROOT}/infra/mq/compose.yml" -f "${REPO_ROOT}/infra/kaf
 
 # Fixed, obviously-fake demo identities (§7 A02) - one per role this slice needs to drive
 # API calls as, never a real name/email.
-STUDENT_OID="c0000000-0000-4000-8000-0000000000e1"
-TECNICO_OID="c0000000-0000-4000-8000-0000000000e2"
+#
+# WARNING: these are fabricated, obviously-fake OIDs with no relationship to any real Entra
+# user (docs/designs/aws-deployment.md Decision 1). To re-seed against real Entra oid claims
+# before a presentation: read the real oid from a real user's token via jwt.ms
+# (docs/ENTRA_SETUP.md), export SEED_STUDENT_OID / SEED_TECNICO_OID accordingly, and run
+# against a stack that has NEVER been seeded before (a fresh `down -v` + cold-start) - the
+# idempotency check a few lines below is keyed on a fixed `notes` marker per lifecycle slot,
+# not on the OID, so re-running with a different OID against already-seeded data silently
+# skips creating anything new under the new OID, leaving the old fake OID's bookings in
+# place instead. See docs/DESPLIEGUE_RUNBOOK.md Fase 2 for the exact sequence.
+STUDENT_OID="${SEED_STUDENT_OID:-c0000000-0000-4000-8000-0000000000e1}"
+TECNICO_OID="${SEED_TECNICO_OID:-c0000000-0000-4000-8000-0000000000e2}"
 
 # Catalog seed's own fixed EQUIPO/INSUMO ids (infra/apps/seed/catalog-seed.sql) - spread
 # across five different resources so no single resource's stock is exhausted by seeding.

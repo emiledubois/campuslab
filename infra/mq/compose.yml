@@ -23,6 +23,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   rabbitmq-1:
     image: rabbitmq:4.3.5-management
@@ -33,6 +34,8 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
       RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
       RABBITMQ_NODENAME: rabbit@rabbitmq-1
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
     volumes:
       - ./rabbitmq-cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
       - ./enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
@@ -45,6 +48,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   rabbitmq-2:
     image: rabbitmq:4.3.5-management
@@ -68,3 +72,4 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped

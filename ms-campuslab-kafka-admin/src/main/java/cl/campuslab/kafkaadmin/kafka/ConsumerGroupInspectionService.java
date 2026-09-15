@@ -12,6 +12,7 @@ import org.apache.kafka.clients.admin.ConsumerGroupListing;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.common.TopicPartition;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 /**
@@ -29,7 +30,7 @@ public class ConsumerGroupInspectionService {
     private final Admin adminClient;
     private final KafkaReachabilityChecker reachabilityChecker;
 
-    public ConsumerGroupInspectionService(Admin adminClient, KafkaReachabilityChecker reachabilityChecker) {
+    public ConsumerGroupInspectionService(@Lazy Admin adminClient, KafkaReachabilityChecker reachabilityChecker) {
         this.adminClient = adminClient;
         this.reachabilityChecker = reachabilityChecker;
     }

@@ -2,6 +2,7 @@ package cl.campuslab.kafkaadmin.kafka;
 
 import java.util.concurrent.TimeUnit;
 import org.apache.kafka.clients.admin.Admin;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 /**
@@ -18,7 +19,7 @@ public class KafkaReachabilityChecker {
 
     private final Admin adminClient;
 
-    public KafkaReachabilityChecker(Admin adminClient) {
+    public KafkaReachabilityChecker(@Lazy Admin adminClient) {
         this.adminClient = adminClient;
     }
 
