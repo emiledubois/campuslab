@@ -2,7 +2,6 @@
 
 Sistema de reserva de laboratorios y equipos academicos para una red de 20 laboratorios. Proyecto del Caso 2 de **DSY1107 — Desarrollo Cloud Native I**.
 
-Integrantes: [Nombre 1], [Nombre 2], [Nombre 3]
 
 ---
 
