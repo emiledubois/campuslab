@@ -26,3 +26,4 @@ infra/**/data/
 /.claude/
 /CLAUDE.md
 /BOOTSTRAP_PROMPT.md
+docs/

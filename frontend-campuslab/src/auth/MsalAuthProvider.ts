@@ -27,6 +27,19 @@ export class MsalAuthProvider implements SessionProvider {
 
   async initialize(): Promise<void> {
     await this.msalInstance.initialize()
+
+    // MSAL needs this on every page load, not just /auth/callback: it consumes a pending redirect response and clears the interaction-in-progress flag.
+    try {
+      const result = await this.msalInstance.handleRedirectPromise()
+      if (result?.account) {
+        this.msalInstance.setActiveAccount(result.account)
+        return
+      }
+    } catch (error) {
+      // MSAL memoizes the rejection, so the callback page's own call re-surfaces it.
+      console.error('MSAL handleRedirectPromise() failed during initialize()', error)
+    }
+
     const account = this.msalInstance.getAllAccounts()[0] ?? null
     if (account) {
       this.msalInstance.setActiveAccount(account)

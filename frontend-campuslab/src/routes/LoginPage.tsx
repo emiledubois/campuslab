@@ -5,7 +5,7 @@ import { getActiveAuthProvider } from '../auth/authRegistry'
 import { DEMO_IDENTITIES, DemoSessionProvider, isDemoAuthEnabled, type DemoIdentity } from '../auth/DemoSessionProvider'
 
 export function LoginPage() {
-  const { login } = useAuth()
+  const { login, isAuthenticated, isLoading } = useAuth()
   const [error, setError] = useState<string | null>(null)
   const [signedIn, setSignedIn] = useState(false)
 
@@ -30,14 +30,19 @@ export function LoginPage() {
     }
   }
 
-  if (isDemoAuthEnabled()) {
-    // <Navigate> rather than useNavigate(): the hook would run on every render of this
-    // component, including the Entra path whose own test renders LoginPage outside a
-    // Router. This element is only ever created in demo mode.
-    if (signedIn) {
-      return <Navigate to="/dashboard" replace />
-    }
+  // Nada que mostrar mientras el provider inicializa: renderizar el boton aqui haria
+  // parpadear "Inicia sesion" en cada recarga de un usuario ya autenticado.
+  if (isLoading) {
+    return null
+  }
 
+  // Ya hay sesion: /login no esta protegida, asi que sin esto el boton sigue visible
+  // despues de entrar y un clic dispararia un loginRedirect innecesario.
+  if (isAuthenticated || signedIn) {
+    return <Navigate to="/dashboard" replace />
+  }
+
+  if (isDemoAuthEnabled()) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8">
         <p className="text-slate-600">Modo demo local: elige con que identidad entrar.</p>
