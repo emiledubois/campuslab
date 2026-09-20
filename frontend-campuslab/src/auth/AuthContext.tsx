@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { readAuthConfig } from './authConfig'
 import { AuthContext } from './authContext'
 import { MsalAuthProvider } from './MsalAuthProvider'
+import { DemoSessionProvider, isDemoAuthEnabled } from './DemoSessionProvider'
 import { setActiveAuthProvider, type SessionProvider } from './authRegistry'
 
 interface AuthContextProviderProps {
@@ -10,8 +11,17 @@ interface AuthContextProviderProps {
   provider?: SessionProvider
 }
 
+/**
+ * Provider selection: MsalAuthProvider always, except when VITE_AUTH_MODE=demo, a
+ * documented temporary local-demo mode that exists only while the project tenant cannot
+ * be created (docs/DEMO_LOCAL.md). Unset the variable and this branch is dead.
+ */
+function createProvider(): SessionProvider {
+  return isDemoAuthEnabled() ? new DemoSessionProvider() : new MsalAuthProvider(readAuthConfig())
+}
+
 export function AuthContextProvider({ children, provider: providerOverride }: AuthContextProviderProps) {
-  const [provider] = useState<SessionProvider>(() => providerOverride ?? new MsalAuthProvider(readAuthConfig()))
+  const [provider] = useState<SessionProvider>(() => providerOverride ?? createProvider())
   const [isLoading, setIsLoading] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
 
