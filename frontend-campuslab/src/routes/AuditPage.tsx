@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from 'react'
 import { apiFetch } from '../api/httpClient'
+import { AsyncStateNotice } from '../components/AsyncStateNotice'
+import { PageContainer, PageHeading } from '../components/Page'
 import { useMe } from '../hooks/useMe'
+import { canViewAudit } from './roleAccess'
 
 type EventType =
   | 'BOOKING_SOLICITADA'
@@ -52,7 +55,7 @@ async function errorMessageFor(response: Response, fallback: string): Promise<st
 export function AuditPage() {
   const { me, isLoading: meLoading } = useMe()
   const roles = me?.roles ?? []
-  const canView = roles.includes('ADMIN') || roles.includes('AUDITOR')
+  const canView = canViewAudit(roles)
 
   const [events, setEvents] = useState<TimelineEvent[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -107,8 +110,8 @@ export function AuditPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-6 p-8">
-      <h2 className="text-xl font-medium text-slate-900">Auditoria</h2>
+    <PageContainer>
+      <PageHeading>Auditoria</PageHeading>
 
       <form onSubmit={handleSubmit} aria-label="Filtrar timeline" className="flex flex-col gap-3 rounded border border-slate-200 p-4">
         <label className="flex flex-col gap-1 text-sm">
@@ -138,7 +141,7 @@ export function AuditPage() {
           Hasta
           <input type="datetime-local" value={to} onChange={(event) => setTo(event.target.value)} />
         </label>
-        {error && <p className="text-red-600">{error}</p>}
+        {error && <AsyncStateNotice kind="error" message={error} />}
         <button
           type="submit"
           disabled={loading}
@@ -148,7 +151,10 @@ export function AuditPage() {
         </button>
       </form>
 
-      {hasSearched && events.length === 0 && !error && <p>No hay eventos para estos filtros.</p>}
+      {loading && <AsyncStateNotice kind="loading" message="Cargando eventos..." />}
+      {!loading && hasSearched && events.length === 0 && !error && (
+        <AsyncStateNotice kind="empty" message="No hay eventos para estos filtros." />
+      )}
 
       <ul data-testid="audit-timeline-list" className="flex flex-col gap-3">
         {events.map((timelineEvent) => (
@@ -164,6 +170,6 @@ export function AuditPage() {
           </li>
         ))}
       </ul>
-    </div>
+    </PageContainer>
   )
 }

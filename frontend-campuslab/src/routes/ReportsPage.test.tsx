@@ -85,7 +85,12 @@ describe('ReportsPage', () => {
     renderReportsPage()
 
     const reservas = await screen.findByTestId('reservas-por-hora-panel')
-    expect(within(reservas).getByText('2 buckets')).toBeInTheDocument()
+    const chart = within(reservas).getByTestId('reservas-por-hora-chart')
+    const bars = within(chart).getAllByTestId(/^reservas-bar-/)
+    expect(bars).toHaveLength(KPIS_RESPONSE.reservasPorHora.buckets.length)
+    expect(
+      within(chart).getByTestId(`reservas-bar-${KPIS_RESPONSE.reservasPorHora.buckets[1].hourStart}`),
+    ).toHaveAttribute('title', expect.stringContaining('2 reservas'))
 
     const ciclo = screen.getByTestId('tiempo-de-ciclo-panel')
     expect(within(ciclo).getByText(/7200/)).toBeInTheDocument()
@@ -161,6 +166,44 @@ describe('ReportsPage', () => {
 
     expect(await screen.findByTestId('reports-access-denied')).toBeInTheDocument()
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/report/'))).toBe(false)
+  })
+
+  it('collapses "Reservas por hora" to the shared empty-state notice when every bucket is zero', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/me')) {
+        return meResponse(['ADMIN'])
+      }
+      if (url.includes('/api/report/kpis')) {
+        return new Response(
+          JSON.stringify({
+            ...KPIS_RESPONSE,
+            reservasPorHora: {
+              bucketCount: 2,
+              buckets: [
+                { hourStart: '2026-09-11T14:00:00Z', count: 0 },
+                { hourStart: '2026-09-11T15:00:00Z', count: 0 },
+              ],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url.includes('/api/report/top-resources')) {
+        return new Response(JSON.stringify(TOP_RESOURCES_RESPONSE), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderReportsPage()
+
+    const reservas = await screen.findByTestId('reservas-por-hora-panel')
+    expect(within(reservas).queryByTestId('reservas-por-hora-chart')).not.toBeInTheDocument()
+    expect(within(reservas).getByText('Sin reservas en este rango.')).toBeInTheDocument()
   })
 
   it('surfaces a 400 from the server as an inline message, not a crash', async () => {

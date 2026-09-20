@@ -131,6 +131,38 @@ describe('CatalogPage', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/api/catalog/resources'))).toBe(false)
   })
 
+  it('QA: shows a loading notice then an empty-state notice (not identical, not a silent blank list) for tecnico.test with no resources', async () => {
+    let resolveFetch: (value: Response) => void = () => {}
+    const pending = new Promise<Response>((resolve) => {
+      resolveFetch = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.endsWith('/api/me')) {
+          return meResponse(['TECNICO'])
+        }
+        if (url.endsWith('/api/catalog/resources')) {
+          return pending
+        }
+        throw new Error(`unexpected fetch: ${url}`)
+      }),
+    )
+
+    renderCatalogPage()
+
+    // Loading and empty-but-loaded are structurally distinguishable data-testids.
+    expect(await screen.findByTestId('async-state-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('async-state-empty')).not.toBeInTheDocument()
+
+    resolveFetch(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    expect(await screen.findByTestId('async-state-empty')).toBeInTheDocument()
+    expect(screen.queryByTestId('async-state-loading')).not.toBeInTheDocument()
+    expect(screen.getByText('No hay recursos en el catalogo.')).toBeInTheDocument()
+  })
+
   it('appends a newly created LABORATORIO to the list without a page reload', async () => {
     const created = { ...LAB_RESOURCE, id: 'new-id', name: 'Laboratorio nuevo' }
     vi.stubGlobal(

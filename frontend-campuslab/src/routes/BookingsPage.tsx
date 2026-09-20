@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { apiFetch } from '../api/httpClient'
+import { AsyncStateNotice } from '../components/AsyncStateNotice'
+import { PageContainer, PageHeading } from '../components/Page'
+import { StatusBadge, type BookingStatus } from '../components/StatusBadge'
 import { useMe } from '../hooks/useMe'
-
-type BookingStatus = 'SOLICITADA' | 'APROBADA' | 'EN_PREPARACION' | 'EN_USO' | 'DEVUELTA' | 'CANCELADA'
+import { canViewBookings } from './roleAccess'
 
 interface Booking {
   id: string
@@ -38,6 +40,10 @@ async function errorMessageFor(response: Response, fallback: string): Promise<st
   }
 }
 
+function formatDateTime(iso: string): string {
+  return new Intl.DateTimeFormat('es-CL', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(iso))
+}
+
 /**
  * Role gating here is UX only - GET/POST/PUT are independently re-enforced by the
  * BFF and by bookings itself (see acceptance criteria 1-22), so a user who bypassed
@@ -48,10 +54,11 @@ export function BookingsPage() {
   const roles = me?.roles ?? []
   const isEstudiante = roles.includes('ESTUDIANTE')
   const isStaff = roles.includes('TECNICO') || roles.includes('ADMIN')
-  const canView = isEstudiante || isStaff
+  const canView = canViewBookings(roles)
 
   const [bookings, setBookings] = useState<Booking[]>([])
   const [listError, setListError] = useState<string | null>(null)
+  const [listLoading, setListLoading] = useState(true)
 
   useEffect(() => {
     if (meLoading || !canView) {
@@ -69,11 +76,17 @@ export function BookingsPage() {
       .then((data) => {
         if (!cancelled) {
           setBookings(data)
+          setListError(null)
         }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
           setListError(err instanceof Error ? err.message : 'No se pudieron cargar las reservas.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setListLoading(false)
         }
       })
 
@@ -97,10 +110,17 @@ export function BookingsPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-6 p-8">
-      <h2 className="text-xl font-medium text-slate-900">Reservas</h2>
+    <PageContainer>
+      <PageHeading>Reservas</PageHeading>
 
-      {listError && <p className="text-red-600">{listError}</p>}
+      {listLoading && <AsyncStateNotice kind="loading" message="Cargando reservas..." />}
+      {!listLoading && listError && <AsyncStateNotice kind="error" message={listError} />}
+      {!listLoading && !listError && bookings.length === 0 && (
+        <AsyncStateNotice
+          kind="empty"
+          message={isEstudiante ? 'No tienes reservas.' : 'No hay reservas registradas.'}
+        />
+      )}
 
       {isEstudiante && (
         <CreateBookingForm onCreated={(created) => setBookings((current) => [...current, created])} />
@@ -118,7 +138,7 @@ export function BookingsPage() {
           />
         ))}
       </ul>
-    </div>
+    </PageContainer>
   )
 }
 
@@ -208,6 +228,13 @@ function CreateBookingForm({ onCreated }: { onCreated: (booking: Booking) => voi
   )
 }
 
+/**
+ * Shortened resource id, full UUID kept in title= for every role uniformly (design
+ * doc §5c): GET /api/catalog/resources - the only way to resolve a name - is
+ * ADMIN/TECNICO-only, and widening it or adding backend fields to fix this display
+ * gap is explicitly out of scope for this frontend-only slice. Accepted limitation,
+ * not a bug.
+ */
 function BookingRow({
   booking,
   isStaff,
@@ -249,8 +276,18 @@ function BookingRow({
 
   return (
     <li data-testid={`booking-item-${booking.id}`} className="rounded border border-slate-200 p-4">
-      <p className="font-medium">{booking.resourceId}</p>
-      <p className="text-sm text-slate-500">{booking.status}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-medium" title={booking.resourceId}>
+          Recurso {booking.resourceId.slice(0, 8)}...
+        </p>
+        <StatusBadge status={booking.status} />
+      </div>
+      <p className="text-sm text-slate-500">
+        {formatDateTime(booking.requestedStart)} - {formatDateTime(booking.requestedEnd)}
+      </p>
+      <p className="text-sm text-slate-500">
+        {booking.notes ?? <span className="text-slate-400">Sin notas</span>}
+      </p>
       {error && <p className="text-red-600">{error}</p>}
       {candidates.length > 0 && (
         <div className="mt-2 flex gap-2">

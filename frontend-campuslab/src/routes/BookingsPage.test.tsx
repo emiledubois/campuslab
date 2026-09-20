@@ -69,7 +69,7 @@ describe('BookingsPage', () => {
 
     renderBookingsPage()
 
-    expect(await screen.findByText(OWN_BOOKING.resourceId)).toBeInTheDocument()
+    expect(await screen.findByTitle(OWN_BOOKING.resourceId)).toBeInTheDocument()
     expect(screen.getByRole('form', { name: 'Crear reserva' })).toBeInTheDocument()
   })
 
@@ -104,7 +104,7 @@ describe('BookingsPage', () => {
     await user.type(within(form).getByLabelText('Fin'), '2026-09-15T12:00')
     await user.click(within(form).getByRole('button', { name: 'Solicitar' }))
 
-    expect(await screen.findByText('new-resource-id')).toBeInTheDocument()
+    expect(await screen.findByTitle('new-resource-id')).toBeInTheDocument()
   })
 
   it('renders the unscoped list with status-change controls but no create form for tecnico.test/admin.test', async () => {
@@ -133,11 +133,56 @@ describe('BookingsPage', () => {
 
     renderBookingsPage()
 
-    expect(await screen.findByText(OWN_BOOKING.resourceId)).toBeInTheDocument()
+    expect(await screen.findByTitle(OWN_BOOKING.resourceId)).toBeInTheDocument()
     expect(screen.getByTestId(`booking-item-${other.id}`)).toBeInTheDocument()
     expect(screen.queryByRole('form', { name: 'Crear reserva' })).not.toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'APROBADA' })).toHaveLength(2)
     expect(screen.getAllByRole('button', { name: 'CANCELADA' })).toHaveLength(2)
+  })
+
+  it('QA: shows formatted dates, notes and a distinct StatusBadge per row (design doc AC13)', async () => {
+    const solicitada = { ...OWN_BOOKING, id: 'row-solicitada', status: 'SOLICITADA' }
+    const aprobada = { ...OWN_BOOKING, id: 'row-aprobada', status: 'APROBADA', notes: null }
+    const cancelada = { ...OWN_BOOKING, id: 'row-cancelada', status: 'CANCELADA' }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.endsWith('/api/me')) {
+          return meResponse(['TECNICO'])
+        }
+        if (url.endsWith('/api/bookings')) {
+          return new Response(JSON.stringify([solicitada, aprobada, cancelada]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        throw new Error(`unexpected fetch: ${url}`)
+      }),
+    )
+
+    renderBookingsPage()
+
+    const solicitadaRow = await screen.findByTestId(`booking-item-${solicitada.id}`)
+    expect(within(solicitadaRow).getByTestId('status-badge-SOLICITADA')).toBeInTheDocument()
+    expect(within(solicitadaRow).getByText('Practica de redes')).toBeInTheDocument()
+    // requestedStart/requestedEnd are formatted, never the raw ISO string.
+    expect(within(solicitadaRow).queryByText(OWN_BOOKING.requestedStart)).not.toBeInTheDocument()
+
+    const aprobadaRow = screen.getByTestId(`booking-item-${aprobada.id}`)
+    expect(within(aprobadaRow).getByTestId('status-badge-APROBADA')).toBeInTheDocument()
+    expect(within(aprobadaRow).getByText('Sin notas')).toBeInTheDocument()
+
+    const canceladaRow = screen.getByTestId(`booking-item-${cancelada.id}`)
+    expect(within(canceladaRow).getByTestId('status-badge-CANCELADA')).toBeInTheDocument()
+
+    // Visually distinct: at least SOLICITADA/APROBADA/CANCELADA have different class strings.
+    const solicitadaBadge = within(solicitadaRow).getByTestId('status-badge-SOLICITADA')
+    const aprobadaBadge = within(aprobadaRow).getByTestId('status-badge-APROBADA')
+    const canceladaBadge = within(canceladaRow).getByTestId('status-badge-CANCELADA')
+    expect(solicitadaBadge.className).not.toBe(aprobadaBadge.className)
+    expect(aprobadaBadge.className).not.toBe(canceladaBadge.className)
+    expect(solicitadaBadge.className).not.toBe(canceladaBadge.className)
   })
 
   it('shows an access-denied message for auditor.test and never calls GET /api/bookings', async () => {
@@ -188,7 +233,7 @@ describe('BookingsPage', () => {
     expect(
       await screen.findByText('Cannot transition a booking from DEVUELTA to EN_PREPARACION.'),
     ).toBeInTheDocument()
-    expect(screen.getByText(OWN_BOOKING.resourceId)).toBeInTheDocument()
+    expect(screen.getByTitle(OWN_BOOKING.resourceId)).toBeInTheDocument()
   })
 
   it('reviewer MINOR finding: estudiante.test sees a CANCELADA button on their own EN_PREPARACION booking ' +
@@ -233,6 +278,6 @@ describe('BookingsPage', () => {
     expect(
       await screen.findByText('Cannot transition a booking from EN_PREPARACION to CANCELADA.'),
     ).toBeInTheDocument()
-    expect(screen.getByText(OWN_BOOKING.resourceId)).toBeInTheDocument()
+    expect(screen.getByTitle(OWN_BOOKING.resourceId)).toBeInTheDocument()
   })
 })

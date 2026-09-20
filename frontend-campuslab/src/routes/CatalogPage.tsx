@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { apiFetch } from '../api/httpClient'
+import { AsyncStateNotice } from '../components/AsyncStateNotice'
+import { PageContainer, PageHeading } from '../components/Page'
 import { useMe } from '../hooks/useMe'
+import { canViewCatalog } from './roleAccess'
 
 type ResourceType = 'LABORATORIO' | 'EQUIPO' | 'INSUMO'
 
@@ -32,11 +35,12 @@ function usesCupo(resourceType: ResourceType): boolean {
 export function CatalogPage() {
   const { me, isLoading: meLoading } = useMe()
   const roles = me?.roles ?? []
-  const canView = roles.includes('ADMIN') || roles.includes('TECNICO')
+  const canView = canViewCatalog(roles)
   const isAdmin = roles.includes('ADMIN')
 
   const [resources, setResources] = useState<CatalogResource[]>([])
   const [listError, setListError] = useState<string | null>(null)
+  const [listLoading, setListLoading] = useState(true)
 
   useEffect(() => {
     if (meLoading || !canView) {
@@ -54,11 +58,17 @@ export function CatalogPage() {
       .then((data) => {
         if (!cancelled) {
           setResources(data)
+          setListError(null)
         }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
           setListError(err instanceof Error ? err.message : 'No se pudo cargar el catalogo.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setListLoading(false)
         }
       })
 
@@ -82,10 +92,14 @@ export function CatalogPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-6 p-8">
-      <h2 className="text-xl font-medium text-slate-900">Catalogo</h2>
+    <PageContainer>
+      <PageHeading>Catalogo</PageHeading>
 
-      {listError && <p className="text-red-600">{listError}</p>}
+      {listLoading && <AsyncStateNotice kind="loading" message="Cargando catalogo..." />}
+      {!listLoading && listError && <AsyncStateNotice kind="error" message={listError} />}
+      {!listLoading && !listError && resources.length === 0 && (
+        <AsyncStateNotice kind="empty" message="No hay recursos en el catalogo." />
+      )}
 
       {isAdmin && (
         <CreateResourceForm onCreated={(created) => setResources((current) => [...current, created])} />
@@ -103,7 +117,7 @@ export function CatalogPage() {
           />
         ))}
       </ul>
-    </div>
+    </PageContainer>
   )
 }
 
