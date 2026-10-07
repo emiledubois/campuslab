@@ -4,6 +4,10 @@ spring:
   rabbitmq:
     listener:
       simple:
+        acknowledge-mode: manual
+        prefetch: 1
+        concurrency: 3
+        max-concurrency: 5
         default-requeue-rejected: false
 management:
   endpoints:
@@ -18,3 +22,12 @@ notify:
   dedup:
     max-size: 10000
     expire-after-write-hours: 24
+  retry:
+    max-attempts: 4
+    # Shorter than production defaults (200/2000ms) so the retry-exhaustion integration
+    # tests stay fast - the backoff *algorithm* under test is identical, only the
+    # magnitude is tuned for test speed (per-test @DynamicPropertySource overrides
+    # max-attempts further where a test needs an even smaller retry budget).
+    initial-backoff-ms: 50
+    multiplier: 2.0
+    max-backoff-ms: 200

@@ -9,6 +9,10 @@ spring:
     connection-timeout: 2000
     listener:
       simple:
+        acknowledge-mode: manual
+        prefetch: ${NOTIFY_PREFETCH:1}
+        concurrency: ${NOTIFY_CONCURRENCY_MIN:3}
+        max-concurrency: ${NOTIFY_CONCURRENCY_MAX:5}
         default-requeue-rejected: false
 server:
   port: ${SERVER_PORT:8080}
@@ -25,3 +29,8 @@ notify:
   dedup:
     max-size: 10000
     expire-after-write-hours: 24
+  retry:
+    max-attempts: ${NOTIFY_RETRY_MAX_ATTEMPTS:4}
+    initial-backoff-ms: ${NOTIFY_RETRY_INITIAL_BACKOFF_MS:200}
+    multiplier: ${NOTIFY_RETRY_MULTIPLIER:2.0}
+    max-backoff-ms: ${NOTIFY_RETRY_MAX_BACKOFF_MS:2000}
