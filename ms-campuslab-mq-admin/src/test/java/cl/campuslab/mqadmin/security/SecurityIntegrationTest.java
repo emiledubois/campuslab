@@ -2,6 +2,7 @@ package cl.campuslab.mqadmin.security;
 
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -10,7 +11,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import cl.campuslab.mqadmin.AbstractIntegrationTest;
 import java.time.Instant;
 import java.util.List;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -105,6 +111,60 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"all\":true}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // --- Slice A: ADMIN-only on all 7 new endpoints (design doc AC16, 21 checks) ---
+
+    private static final String QUEUE_BODY = "{\"name\":\"q.sec.probe\"}";
+    private static final String EXCHANGE_BODY = "{\"name\":\"sec.probe.exchange\",\"type\":\"direct\"}";
+    private static final String BINDING_BODY =
+            "{\"source\":\"sec.probe.exchange\",\"destination\":\"q.sec.probe\",\"destinationType\":\"QUEUE\",\"routingKey\":\"x\"}";
+
+    static Stream<MockHttpServletRequestBuilder> newEndpointRequests() {
+        return Stream.of(
+                MockMvcRequestBuilders.post("/api/admin/mq/queues").contentType(MediaType.APPLICATION_JSON).content(QUEUE_BODY),
+                delete("/api/admin/mq/queues/q.sec.probe"),
+                MockMvcRequestBuilders.post("/api/admin/mq/queues/q.sec.probe/purge"),
+                MockMvcRequestBuilders.post("/api/admin/mq/exchanges").contentType(MediaType.APPLICATION_JSON).content(EXCHANGE_BODY),
+                delete("/api/admin/mq/exchanges/sec.probe.exchange"),
+                MockMvcRequestBuilders.post("/api/admin/mq/bindings").contentType(MediaType.APPLICATION_JSON).content(BINDING_BODY),
+                delete("/api/admin/mq/bindings").contentType(MediaType.APPLICATION_JSON).content(BINDING_BODY));
+    }
+
+    @ParameterizedTest
+    @MethodSource("newEndpointRequests")
+    void newEndpoints_withTecnicoToken_return403(MockHttpServletRequestBuilder request) throws Exception {
+        given(jwtDecoder.decode("tecnico-token")).willReturn(jwt("tecnico-uuid", List.of("TECNICO")));
+
+        mockMvc.perform(request.with(req -> {
+                    req.addHeader("Authorization", "Bearer tecnico-token");
+                    return req;
+                }))
+                .andExpect(status().isForbidden());
+    }
+
+    @ParameterizedTest
+    @MethodSource("newEndpointRequests")
+    void newEndpoints_withEstudianteToken_return403(MockHttpServletRequestBuilder request) throws Exception {
+        given(jwtDecoder.decode("estudiante-token")).willReturn(jwt("estudiante-uuid", List.of("ESTUDIANTE")));
+
+        mockMvc.perform(request.with(req -> {
+                    req.addHeader("Authorization", "Bearer estudiante-token");
+                    return req;
+                }))
+                .andExpect(status().isForbidden());
+    }
+
+    @ParameterizedTest
+    @MethodSource("newEndpointRequests")
+    void newEndpoints_withAuditorToken_return403(MockHttpServletRequestBuilder request) throws Exception {
+        given(jwtDecoder.decode("auditor-token")).willReturn(jwt("auditor-uuid", List.of("AUDITOR")));
+
+        mockMvc.perform(request.with(req -> {
+                    req.addHeader("Authorization", "Bearer auditor-token");
+                    return req;
+                }))
+                .andExpect(status().isForbidden());
     }
 
     @Test

@@ -30,6 +30,10 @@ public final class MqTopology {
 
     public static final List<String> DLQ_NAMES = List.of(DLQ_EMAIL, DLQ_PREP, DLQ_VOUCHER);
 
+    /** The 3 declared exchanges (Slice A design doc §4) - same single source of truth used
+     * by {@link #isManagedExchange(String)}'s protection guard. */
+    public static final List<String> ALL_EXCHANGES = List.of(EXCHANGE_CMD_DIRECT, EXCHANGE_CMD_TOPIC, EXCHANGE_CMD_DEAD_DLX);
+
     /** Direct-exchange routing key each work queue is bound to (design doc §5.1 table). */
     public static final Map<String, String> WORK_QUEUE_DIRECT_ROUTING_KEY = Map.of(
             QUEUE_EMAIL, "email.send",
@@ -66,5 +70,17 @@ public final class MqTopology {
 
     public static boolean isDlq(String queueName) {
         return DLQ_NAMES.contains(queueName);
+    }
+
+    /** Slice A (design doc §4/§5.1) - the exact allow-list-by-exclusion check the
+     * create/delete/purge guard relies on. Same literal constants {@link RabbitTopologyConfig}
+     * declares with, never a second hardcoded list to drift out of sync. */
+    public static boolean isManagedQueue(String name) {
+        return ALL_QUEUES_IN_DISPLAY_ORDER.contains(name);
+    }
+
+    /** Slice A (design doc §4/§5.1) - exchange counterpart of {@link #isManagedQueue(String)}. */
+    public static boolean isManagedExchange(String name) {
+        return ALL_EXCHANGES.contains(name);
     }
 }

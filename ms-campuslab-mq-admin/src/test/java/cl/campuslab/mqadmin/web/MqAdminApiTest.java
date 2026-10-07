@@ -2,6 +2,7 @@ package cl.campuslab.mqadmin.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -188,6 +189,243 @@ class MqAdminApiTest extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"all\":true}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    // --- Slice A: imperative create/delete/purge endpoints (design doc mq-admin-endpoints.md) ---
+
+    @Test
+    void createQueue_thenDeleteIt_bothSucceedAgainstTheRealBroker() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/queues")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"q.demo.ops\",\"durable\":true}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("q.demo.ops"))
+                .andExpect(jsonPath("$.durable").value(true))
+                .andExpect(jsonPath("$.exclusive").value(false))
+                .andExpect(jsonPath("$.autoDelete").value(false))
+                .andExpect(jsonPath("$.messageCount").value(0))
+                .andExpect(jsonPath("$.consumerCount").value(0));
+        assertThat(rabbitAdmin.getQueueProperties("q.demo.ops")).isNotNull();
+
+        mockMvc.perform(delete("/api/admin/mq/queues/q.demo.ops").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNoContent());
+        assertThat(rabbitAdmin.getQueueProperties("q.demo.ops")).isNull();
+
+        mockMvc.perform(delete("/api/admin/mq/queues/q.demo.ops").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createQueue_withEmptyName_returns400WithClearMessage() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/queues")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"\",\"durable\":true}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("name")))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("must not be blank")));
+    }
+
+    @Test
+    void createQueue_withWhitespaceOnlyName_returns400() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/queues")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"   \"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void createQueue_withMalformedJsonBody_returns400NotAStackTrace() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/queues")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("not-json-at-all"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").exists())
+                .andExpect(jsonPath("$.stackTrace").doesNotExist());
+    }
+
+    @Test
+    void createExchange_withInvalidType_returns400() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/exchanges")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"demo.x\",\"type\":\"not-a-type\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void createExchangeAndBinding_thenListedByRabbitmqctlEquivalent() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/exchanges")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"demo.ops.exchange\",\"type\":\"direct\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("demo.ops.exchange"))
+                .andExpect(jsonPath("$.type").value("direct"));
+
+        mockMvc.perform(post("/api/admin/mq/queues")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"q.demo.bind\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/admin/mq/bindings")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"source\":\"demo.ops.exchange\",\"destination\":\"q.demo.bind\",\"destinationType\":\"QUEUE\",\"routingKey\":\"demo.key\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.source").value("demo.ops.exchange"))
+                .andExpect(jsonPath("$.destination").value("q.demo.bind"))
+                .andExpect(jsonPath("$.routingKey").value("demo.key"));
+
+        rabbitTemplate.send("demo.ops.exchange", "demo.key", new Message("hi".getBytes(), new MessageProperties()));
+        Message onQueue = rabbitTemplate.receive("q.demo.bind", 5000);
+        assertThat(onQueue).isNotNull();
+
+        mockMvc.perform(delete("/api/admin/mq/bindings")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"source\":\"demo.ops.exchange\",\"destination\":\"q.demo.bind\",\"destinationType\":\"QUEUE\",\"routingKey\":\"demo.key\"}"))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(delete("/api/admin/mq/queues/q.demo.bind").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(delete("/api/admin/mq/exchanges/demo.ops.exchange").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void deleteBinding_thatNeverExisted_stillReturns204() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/exchanges")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"demo.never.bound.exchange\",\"type\":\"direct\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(delete("/api/admin/mq/bindings")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"source\":\"demo.never.bound.exchange\",\"destination\":\"q.demo.never.bound\",\"destinationType\":\"QUEUE\",\"routingKey\":\"x\"}"))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(delete("/api/admin/mq/exchanges/demo.never.bound.exchange")
+                        .header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void createBinding_withNonexistentQueueDestination_returns404() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/exchanges")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"demo.ops.exchange2\",\"type\":\"direct\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/admin/mq/bindings")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"source\":\"demo.ops.exchange2\",\"destination\":\"q.does.not.exist\",\"destinationType\":\"QUEUE\",\"routingKey\":\"x\"}"))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(delete("/api/admin/mq/exchanges/demo.ops.exchange2")
+                        .header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void createBinding_withManagedSourceExchange_returns409() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/queues")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"q.demo.ops2\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/admin/mq/bindings")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"source\":\"cmd.direct\",\"destination\":\"q.demo.ops2\",\"destinationType\":\"QUEUE\",\"routingKey\":\"x\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("cmd.direct")));
+
+        mockMvc.perform(delete("/api/admin/mq/queues/q.demo.ops2").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void deleteQueue_withManagedName_returns409AndLeavesItIntact() throws Exception {
+        mockMvc.perform(delete("/api/admin/mq/queues/q.cmd.email").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("q.cmd.email")))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("RabbitTopologyConfig")));
+
+        assertThat(rabbitAdmin.getQueueProperties("q.cmd.email")).isNotNull();
+    }
+
+    @Test
+    void deleteExchange_withManagedName_returns409AndLeavesItIntact() throws Exception {
+        mockMvc.perform(delete("/api/admin/mq/exchanges/cmd.direct").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isConflict());
+
+        // still bound/declared: a direct publish through it still reaches a work queue
+        rabbitAdmin.purgeQueue("q.cmd.email");
+        rabbitTemplate.send("cmd.direct", "email.send", new Message("still-wired".getBytes(), new MessageProperties()));
+        Message onWorkQueue = rabbitTemplate.receive("q.cmd.email", 5000);
+        assertThat(onWorkQueue).isNotNull();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "q.cmd.email", "q.cmd.email.dlq", "q.cmd.prep", "q.cmd.prep.dlq", "q.cmd.voucher", "q.cmd.voucher.dlq"})
+    void deleteQueue_withEveryManagedQueueName_returns409(String managedQueueName) throws Exception {
+        mockMvc.perform(delete("/api/admin/mq/queues/" + managedQueueName).header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isConflict());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"cmd.direct", "cmd.topic", "cmd.dead.dlx"})
+    void deleteExchange_withEveryManagedExchangeName_returns409(String managedExchangeName) throws Exception {
+        mockMvc.perform(delete("/api/admin/mq/exchanges/" + managedExchangeName).header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void purgeQueue_withManagedName_returns409AndDoesNotPurge() throws Exception {
+        rabbitTemplate.send("", "q.cmd.email", new Message("keep-me".getBytes(), new MessageProperties()));
+
+        mockMvc.perform(post("/api/admin/mq/queues/q.cmd.email/purge").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isConflict());
+
+        assertThat(rabbitAdmin.getQueueProperties("q.cmd.email")
+                .get(RabbitAdmin.QUEUE_MESSAGE_COUNT)).isEqualTo(1);
+        rabbitAdmin.purgeQueue("q.cmd.email");
+    }
+
+    @Test
+    void purgeQueue_withNonManagedExistingQueue_purgesAndReportsCount() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/queues")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"q.demo.purge\"}"))
+                .andExpect(status().isCreated());
+        rabbitTemplate.send("", "q.demo.purge", new Message("1".getBytes(), new MessageProperties()));
+        rabbitTemplate.send("", "q.demo.purge", new Message("2".getBytes(), new MessageProperties()));
+
+        mockMvc.perform(post("/api/admin/mq/queues/q.demo.purge/purge").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.queueName").value("q.demo.purge"))
+                .andExpect(jsonPath("$.purgedMessageCount").value(2));
+
+        mockMvc.perform(delete("/api/admin/mq/queues/q.demo.purge").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void purgeQueue_withNonexistentQueue_returns404() throws Exception {
+        mockMvc.perform(post("/api/admin/mq/queues/q.does.not.exist/purge").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNotFound());
     }
 
     private void seedDlq(String dlqName, int count) {

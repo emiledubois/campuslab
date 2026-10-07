@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -48,6 +49,43 @@ public class MqAdminFacadeController {
     public ResponseEntity<?> requeue(
             @PathVariable String dlqName, @RequestBody(required = false) byte[] body, HttpServletRequest request) {
         return forward(HttpMethod.POST, MQ_ADMIN_PATH + "/dlq/" + dlqName + "/requeue", request, body);
+    }
+
+    // --- Slice A: imperative create/delete/purge facade routes (mq-admin-endpoints.md §7) ---
+
+    @PostMapping("/queues")
+    public ResponseEntity<?> createQueue(@RequestBody byte[] body, HttpServletRequest request) {
+        return forward(HttpMethod.POST, MQ_ADMIN_PATH + "/queues", request, body);
+    }
+
+    @DeleteMapping("/queues/{name}")
+    public ResponseEntity<?> deleteQueue(@PathVariable String name, HttpServletRequest request) {
+        return forward(HttpMethod.DELETE, MQ_ADMIN_PATH + "/queues/" + name, request, null);
+    }
+
+    @PostMapping("/queues/{name}/purge")
+    public ResponseEntity<?> purgeQueue(@PathVariable String name, HttpServletRequest request) {
+        return forward(HttpMethod.POST, MQ_ADMIN_PATH + "/queues/" + name + "/purge", request, null);
+    }
+
+    @PostMapping("/exchanges")
+    public ResponseEntity<?> createExchange(@RequestBody byte[] body, HttpServletRequest request) {
+        return forward(HttpMethod.POST, MQ_ADMIN_PATH + "/exchanges", request, body);
+    }
+
+    @DeleteMapping("/exchanges/{name}")
+    public ResponseEntity<?> deleteExchange(@PathVariable String name, HttpServletRequest request) {
+        return forward(HttpMethod.DELETE, MQ_ADMIN_PATH + "/exchanges/" + name, request, null);
+    }
+
+    @PostMapping("/bindings")
+    public ResponseEntity<?> createBinding(@RequestBody byte[] body, HttpServletRequest request) {
+        return forward(HttpMethod.POST, MQ_ADMIN_PATH + "/bindings", request, body);
+    }
+
+    @DeleteMapping("/bindings")
+    public ResponseEntity<?> deleteBinding(@RequestBody byte[] body, HttpServletRequest request) {
+        return forward(HttpMethod.DELETE, MQ_ADMIN_PATH + "/bindings", request, body);
     }
 
     private ResponseEntity<?> forward(HttpMethod method, String path, HttpServletRequest request, byte[] body) {

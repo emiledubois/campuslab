@@ -2,6 +2,7 @@ package cl.campuslab.bff.mqadmin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -12,10 +13,15 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -26,6 +32,8 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
  * Mirrors CatalogFacadeControllerTest/BookingsFacadeControllerTest (design doc §6) - a
@@ -52,17 +60,23 @@ class MqAdminFacadeControllerTest {
         registry.add("mq-admin.service-url", () -> "http://localhost:" + fakeMqAdmin.getAddress().getPort());
     }
 
+    private static final List<String> ALL_REGISTERABLE_CONTEXT_PATHS = List.of(
+            "/api/admin/mq/queues",
+            "/api/admin/mq/dlq/q.cmd.email.dlq/requeue",
+            "/api/admin/mq/queues/q.demo.ops",
+            "/api/admin/mq/queues/q.demo.ops/purge",
+            "/api/admin/mq/exchanges",
+            "/api/admin/mq/exchanges/demo.ops.exchange",
+            "/api/admin/mq/bindings");
+
     @AfterEach
     void resetHandlers() {
-        try {
-            fakeMqAdmin.removeContext("/api/admin/mq/queues");
-        } catch (IllegalArgumentException noContextRegistered) {
-            // not every test registers this context
-        }
-        try {
-            fakeMqAdmin.removeContext("/api/admin/mq/dlq/q.cmd.email.dlq/requeue");
-        } catch (IllegalArgumentException noContextRegistered) {
-            // not every test registers this context
+        for (String path : ALL_REGISTERABLE_CONTEXT_PATHS) {
+            try {
+                fakeMqAdmin.removeContext(path);
+            } catch (IllegalArgumentException noContextRegistered) {
+                // not every test registers every context
+            }
         }
     }
 
@@ -160,6 +174,171 @@ class MqAdminFacadeControllerTest {
             fakeMqAdmin = HttpServer.create(new InetSocketAddress("localhost", port), 0);
             fakeMqAdmin.start();
         }
+    }
+
+    // --- Slice A: 7 new imperative facade routes (design doc mq-admin-endpoints.md §7/AC17) ---
+
+    private static final String QUEUE_BODY = "{\"name\":\"q.demo.ops\",\"durable\":true}";
+    private static final String EXCHANGE_BODY = "{\"name\":\"demo.ops.exchange\",\"type\":\"direct\"}";
+    private static final String BINDING_BODY =
+            "{\"source\":\"demo.ops.exchange\",\"destination\":\"q.demo.ops\",\"destinationType\":\"QUEUE\",\"routingKey\":\"x\"}";
+
+    static Stream<Arguments> newEndpointRequests() {
+        return Stream.of(
+                Arguments.of(MockMvcRequestBuilders.post("/api/admin/mq/queues")
+                        .contentType(MediaType.APPLICATION_JSON).content(QUEUE_BODY)),
+                Arguments.of(delete("/api/admin/mq/queues/q.demo.ops")),
+                Arguments.of(MockMvcRequestBuilders.post("/api/admin/mq/queues/q.demo.ops/purge")),
+                Arguments.of(MockMvcRequestBuilders.post("/api/admin/mq/exchanges")
+                        .contentType(MediaType.APPLICATION_JSON).content(EXCHANGE_BODY)),
+                Arguments.of(delete("/api/admin/mq/exchanges/demo.ops.exchange")),
+                Arguments.of(MockMvcRequestBuilders.post("/api/admin/mq/bindings")
+                        .contentType(MediaType.APPLICATION_JSON).content(BINDING_BODY)),
+                Arguments.of(delete("/api/admin/mq/bindings")
+                        .contentType(MediaType.APPLICATION_JSON).content(BINDING_BODY)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("newEndpointRequests")
+    void newEndpoints_withTecnicoRole_return403BeforeReachingMqAdmin(MockHttpServletRequestBuilder request) throws Exception {
+        mockMvc.perform(request.header("Authorization", "Bearer tecnico-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @ParameterizedTest
+    @MethodSource("newEndpointRequests")
+    void newEndpoints_withNoToken_return401BeforeAnyForwarding(MockHttpServletRequestBuilder request) throws Exception {
+        mockMvc.perform(request).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void createQueue_withAdminRole_forwardsBodyAndReturnsMqAdminResponseUnchanged() throws Exception {
+        AtomicReference<String> receivedBody = new AtomicReference<>();
+        fakeMqAdmin.createContext("/api/admin/mq/queues", exchange -> {
+            receivedBody.set(new String(exchange.getRequestBody().readAllBytes()));
+            byte[] responseBody = "{\"name\":\"q.demo.ops\",\"durable\":true}".getBytes();
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(201, responseBody.length);
+            exchange.getResponseBody().write(responseBody);
+            exchange.close();
+        });
+
+        mockMvc.perform(post("/api/admin/mq/queues")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(QUEUE_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("q.demo.ops"));
+        assertThat(receivedBody.get()).isEqualTo(QUEUE_BODY);
+    }
+
+    @Test
+    void deleteQueue_withAdminRole_forwardsPathVariableAndReturnsMqAdminStatusUnchanged() throws Exception {
+        AtomicReference<String> receivedPath = new AtomicReference<>();
+        AtomicReference<String> receivedMethod = new AtomicReference<>();
+        fakeMqAdmin.createContext("/api/admin/mq/queues/q.demo.ops", exchange -> {
+            receivedPath.set(exchange.getRequestURI().getPath());
+            receivedMethod.set(exchange.getRequestMethod());
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+
+        mockMvc.perform(delete("/api/admin/mq/queues/q.demo.ops").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNoContent());
+        assertThat(receivedPath.get()).isEqualTo("/api/admin/mq/queues/q.demo.ops");
+        assertThat(receivedMethod.get()).isEqualTo("DELETE");
+    }
+
+    @Test
+    void purgeQueue_withAdminRole_forwardsToCorrectPathAndReturnsMqAdminBody() throws Exception {
+        fakeMqAdmin.createContext("/api/admin/mq/queues/q.demo.ops/purge", exchange -> {
+            byte[] responseBody = "{\"queueName\":\"q.demo.ops\",\"purgedMessageCount\":3}".getBytes();
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, responseBody.length);
+            exchange.getResponseBody().write(responseBody);
+            exchange.close();
+        });
+
+        mockMvc.perform(post("/api/admin/mq/queues/q.demo.ops/purge").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.purgedMessageCount").value(3));
+    }
+
+    @Test
+    void createExchange_withAdminRole_forwardsBodyAndReturnsMqAdminResponseUnchanged() throws Exception {
+        AtomicReference<String> receivedBody = new AtomicReference<>();
+        fakeMqAdmin.createContext("/api/admin/mq/exchanges", exchange -> {
+            receivedBody.set(new String(exchange.getRequestBody().readAllBytes()));
+            byte[] responseBody = EXCHANGE_BODY.getBytes();
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(201, responseBody.length);
+            exchange.getResponseBody().write(responseBody);
+            exchange.close();
+        });
+
+        mockMvc.perform(post("/api/admin/mq/exchanges")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(EXCHANGE_BODY))
+                .andExpect(status().isCreated());
+        assertThat(receivedBody.get()).isEqualTo(EXCHANGE_BODY);
+    }
+
+    @Test
+    void deleteExchange_withAdminRole_forwardsPathVariableAndReturnsMqAdminStatusUnchanged() throws Exception {
+        AtomicReference<String> receivedPath = new AtomicReference<>();
+        fakeMqAdmin.createContext("/api/admin/mq/exchanges/demo.ops.exchange", exchange -> {
+            receivedPath.set(exchange.getRequestURI().getPath());
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+
+        mockMvc.perform(delete("/api/admin/mq/exchanges/demo.ops.exchange").header("Authorization", "Bearer admin-token"))
+                .andExpect(status().isNoContent());
+        assertThat(receivedPath.get()).isEqualTo("/api/admin/mq/exchanges/demo.ops.exchange");
+    }
+
+    @Test
+    void createBinding_withAdminRole_forwardsBodyAndReturnsMqAdminResponseUnchanged() throws Exception {
+        AtomicReference<String> receivedBody = new AtomicReference<>();
+        AtomicBoolean reachedMqAdmin = new AtomicBoolean(false);
+        fakeMqAdmin.createContext("/api/admin/mq/bindings", exchange -> {
+            reachedMqAdmin.set(true);
+            receivedBody.set(new String(exchange.getRequestBody().readAllBytes()));
+            byte[] responseBody = BINDING_BODY.getBytes();
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(201, responseBody.length);
+            exchange.getResponseBody().write(responseBody);
+            exchange.close();
+        });
+
+        mockMvc.perform(post("/api/admin/mq/bindings")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BINDING_BODY))
+                .andExpect(status().isCreated());
+        assertThat(reachedMqAdmin.get()).isTrue();
+        assertThat(receivedBody.get()).isEqualTo(BINDING_BODY);
+    }
+
+    @Test
+    void deleteBinding_withAdminRole_forwardsBodyAndReturnsMqAdminStatusUnchanged() throws Exception {
+        AtomicReference<String> receivedBody = new AtomicReference<>();
+        AtomicReference<String> receivedMethod = new AtomicReference<>();
+        fakeMqAdmin.createContext("/api/admin/mq/bindings", exchange -> {
+            receivedMethod.set(exchange.getRequestMethod());
+            receivedBody.set(new String(exchange.getRequestBody().readAllBytes()));
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+
+        mockMvc.perform(delete("/api/admin/mq/bindings")
+                        .header("Authorization", "Bearer admin-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BINDING_BODY))
+                .andExpect(status().isNoContent());
+        assertThat(receivedMethod.get()).isEqualTo("DELETE");
+        assertThat(receivedBody.get()).isEqualTo(BINDING_BODY);
     }
 
     private static Jwt jwt(String subject, List<String> roles) {
