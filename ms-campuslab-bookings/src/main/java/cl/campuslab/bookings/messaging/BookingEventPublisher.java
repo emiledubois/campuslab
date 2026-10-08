@@ -23,12 +23,13 @@ import org.springframework.stereotype.Component;
 public class BookingEventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(BookingEventPublisher.class);
-    private static final String EXCHANGE_CMD_DIRECT = "cmd.direct";
 
     private final RabbitTemplate rabbitTemplate;
+    private final BookingsRabbitProperties rabbitProperties;
 
-    public BookingEventPublisher(RabbitTemplate rabbitTemplate) {
+    public BookingEventPublisher(RabbitTemplate rabbitTemplate, BookingsRabbitProperties rabbitProperties) {
         this.rabbitTemplate = rabbitTemplate;
+        this.rabbitProperties = rabbitProperties;
     }
 
     public void publish(NotificationType type, Booking booking, BookingStatus fromStatus, BookingStatus toStatus, String traceId) {
@@ -39,7 +40,7 @@ public class BookingEventPublisher {
                 type, eventId, Instant.now(), traceId, booking.getId().toString(), payload);
 
         try {
-            rabbitTemplate.convertAndSend(EXCHANGE_CMD_DIRECT, type.routingKey(), envelope);
+            rabbitTemplate.convertAndSend(rabbitProperties.exchange(), routingKeyFor(type), envelope);
             log.info("Booking notification: outcome=[PUBLISHED] type=[{}] eventId=[{}] bookingId=[{}] resourceId=[{}]",
                     type, eventId, booking.getId(), booking.getResourceId());
         } catch (Exception ex) {
@@ -51,5 +52,12 @@ public class BookingEventPublisher {
                             + "resourceId=[{}] exceptionClass=[{}] exceptionMessage=[{}]",
                     type, eventId, booking.getId(), booking.getResourceId(), ex.getClass().getName(), ex.getMessage());
         }
+    }
+
+    private String routingKeyFor(NotificationType type) {
+        return switch (type.channel()) {
+            case EMAIL -> rabbitProperties.routingKey().email();
+            case PREP -> rabbitProperties.routingKey().prep();
+        };
     }
 }

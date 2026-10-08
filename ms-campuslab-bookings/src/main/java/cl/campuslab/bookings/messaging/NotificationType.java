@@ -2,25 +2,29 @@ package cl.campuslab.bookings.messaging;
 
 /**
  * The four notification types bookings ever mints (design doc §2.2/§5.2) - each one maps
- * to exactly the routing key its consuming queue is bound to on {@code cmd.direct} in
- * mq-admin's topology (copied, not shared, from that mapping - the two services must
- * agree on the wire contract, not on Java code). Copied, not shared, from
- * ms-campuslab-notify's own {@code NotificationType} per the no-cross-service-code
- * convention already established for the security packages.
+ * to exactly the channel its consuming queue is bound to on {@code cmd.direct} in
+ * mq-admin's topology. The routing-key string itself lives in {@link
+ * BookingsRabbitProperties} (centralized, design doc mq-names-domain-separation.md §9
+ * AC4), not here - this enum only says which channel each type belongs to.
  */
 public enum NotificationType {
-    EMAIL_APPROVED("email.send"),
-    EMAIL_ROOM_READY("email.send"),
-    EMAIL_RETURNED("email.send"),
-    PREP_TICKET_REQUESTED("prep.ticket");
+    EMAIL_APPROVED(Channel.EMAIL),
+    EMAIL_ROOM_READY(Channel.EMAIL),
+    EMAIL_RETURNED(Channel.EMAIL),
+    PREP_TICKET_REQUESTED(Channel.PREP);
 
-    private final String routingKey;
+    private final Channel channel;
 
-    NotificationType(String routingKey) {
-        this.routingKey = routingKey;
+    NotificationType(Channel channel) {
+        this.channel = channel;
     }
 
-    public String routingKey() {
-        return routingKey;
+    public Channel channel() {
+        return channel;
+    }
+
+    public enum Channel {
+        EMAIL,
+        PREP
     }
 }

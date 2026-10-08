@@ -35,6 +35,13 @@ kafka:
   request-timeout-ms: 300
   max-block-ms: 300
 
+messaging:
+  rabbit:
+    exchange: cmd.direct
+    routing-key:
+      email: email.send
+      prep: prep.ticket
+
 # Default target for tests that never exercise the approval saga (most of them) - a
 # reserved-for-documentation address (RFC 5737 TEST-NET-1) with nothing listening, so
 # any test that DOES accidentally reach the saga branch fails fast and deterministically

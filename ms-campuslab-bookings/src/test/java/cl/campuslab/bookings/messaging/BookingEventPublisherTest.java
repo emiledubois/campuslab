@@ -35,7 +35,9 @@ class BookingEventPublisherTest {
 
     @BeforeEach
     void setUp() {
-        publisher = new BookingEventPublisher(rabbitTemplate);
+        BookingsRabbitProperties rabbitProperties = new BookingsRabbitProperties(
+                "cmd.direct", new BookingsRabbitProperties.RoutingKey("email.send", "prep.ticket"));
+        publisher = new BookingEventPublisher(rabbitTemplate, rabbitProperties);
         booking = new Booking(UUID.randomUUID(), "student-oid", Instant.now(), Instant.now().plusSeconds(3600), null);
         setField(booking, "id", UUID.randomUUID());
     }
