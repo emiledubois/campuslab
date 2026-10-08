@@ -4,7 +4,9 @@
 # Complementa a scripts/verify-deploy.sh (salud, topologia y negativos estructurales)
 # ejercitando el ciclo de negocio completo con tokens reales RS256 emitidos por el doble
 # mock-jwks: crear reserva, aprobarla, comprobar propiedad (IDOR), transicion ilegal,
-# timeline de auditoria y KPIs. Solo lectura salvo la reserva que crea a proposito.
+# timeline de auditoria y KPIs. Solo lectura salvo la reserva que crea a proposito y el
+# mensaje veneno de la seccion 6 (publicado directamente en RabbitMQ para demostrar que
+# llega a su DLQ sin reintentos - docs/designs/notify-manual-ack.md).
 #
 # Requiere el stack arriba y mock-jwks corriendo - es decir, despues de
 # scripts/seed-demo-data.sh. Nunca arranca ni detiene nada.
@@ -15,6 +17,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${REPO_ROOT}/scripts/lib/mock-jwks.sh"
 
 BFF_URL="${BFF_URL:-http://localhost:8080}"
+
+# RabbitMQ management API credentials for section 6 (poison-message injection) only -
+# read surgically from .env rather than a full `source`, so this script's other
+# defaults (OIDs, resource id, BFF_URL) stay exactly as they were before this section
+# existed, regardless of whatever else .env happens to set.
+ENV_FILE="${ENV_FILE:-${REPO_ROOT}/.env}"
+if [ -z "${RABBITMQ_USER:-}" ] && [ -f "$ENV_FILE" ]; then
+    RABBITMQ_USER="$(grep -E '^RABBITMQ_USER=' "$ENV_FILE" | head -n1 | cut -d= -f2-)"
+fi
+if [ -z "${RABBITMQ_PASSWORD:-}" ] && [ -f "$ENV_FILE" ]; then
+    RABBITMQ_PASSWORD="$(grep -E '^RABBITMQ_PASSWORD=' "$ENV_FILE" | head -n1 | cut -d= -f2-)"
+fi
+RABBITMQ_MGMT_URL="${RABBITMQ_MGMT_URL:-http://localhost:15672}"
 
 ADMIN_OID="${SEED_ADMIN_OID:-c0000000-0000-4000-8000-0000000000a1}"
 TECNICO_OID="${SEED_TECNICO_OID:-c0000000-0000-4000-8000-0000000000e2}"
@@ -150,6 +165,57 @@ expect "ADMIN consulta colas de RabbitMQ" "200" "$(status GET /api/admin/mq/queu
 expect "ADMIN consulta topicos de Kafka" "200" "$(status GET /api/admin/kafka/topics "$ADMIN_TOKEN")"
 expect "ADMIN consulta consumer groups" "200" "$(status GET /api/admin/kafka/consumer-groups "$ADMIN_TOKEN")"
 expect "ADMIN consulta DLT" "200" "$(status GET /api/admin/kafka/dlt "$ADMIN_TOKEN")"
+
+# publish_via_management_api <exchange> <routing-key> <payload> - publishes directly to
+# the broker over RabbitMQ's Management HTTP API (never through bookings/the BFF), the
+# only way to put a malformed envelope on the wire: every real producer in this system
+# only ever sends well-formed ones. Prints the HTTP status; the call itself is a plain
+# authenticated POST, same auth convention as RABBITMQ_USER/PASSWORD already use
+# everywhere else in this project.
+publish_via_management_api() {
+    local exchange="$1" routing_key="$2" payload="$3"
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -u "${RABBITMQ_USER}:${RABBITMQ_PASSWORD}" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -n --arg rk "$routing_key" --arg p "$payload" \
+            '{properties: {}, routing_key: $rk, payload: $p, payload_encoding: "string"}')" \
+        "${RABBITMQ_MGMT_URL}/api/exchanges/%2f/cmd.direct/publish" 2>/dev/null
+}
+
+echo
+echo "== 6. Mensaje veneno llega a su DLQ sin reintentos =="
+if [ -z "$RABBITMQ_USER" ] || [ -z "$RABBITMQ_PASSWORD" ]; then
+    fail "RABBITMQ_USER/RABBITMQ_PASSWORD no disponibles (revisa ${ENV_FILE}) - se omite la seccion 6"
+else
+    # q.cmd.email.dlq es en si misma un nombre que MqTopology declara, asi que el propio
+    # guardia de topologia de Slice A (docs/designs/mq-admin-endpoints.md) rechaza
+    # purgarla con 409 - correcto, no es un caso a evadir. Se registra la profundidad
+    # actual como linea base y se exige un incremento de exactamente uno, en vez de
+    # depender de un valor absoluto.
+    BASELINE_DEPTH="$(body_of GET /api/admin/mq/queues "$ADMIN_TOKEN" \
+        | jq -r '[.[] | select(.name == "q.cmd.email.dlq")][0].messageCount // 0')"
+
+    PUBLISH_STATUS="$(publish_via_management_api cmd.direct email.send 'not valid json')"
+    expect "Mensaje veneno publicado directamente en cmd.direct" "200" "$PUBLISH_STATUS"
+
+    echo "  esperando a que el mensaje veneno llegue a la DLQ (sin reintentos; profundidad base=${BASELINE_DEPTH})..."
+    EXPECTED_DEPTH=$((BASELINE_DEPTH + 1))
+    DLQ_FOUND="no"
+    for _ in $(seq 1 10); do
+        DEPTH="$(body_of GET /api/admin/mq/queues "$ADMIN_TOKEN" \
+            | jq -r '[.[] | select(.name == "q.cmd.email.dlq")][0].messageCount // 0')"
+        if [ "$DEPTH" = "$EXPECTED_DEPTH" ]; then
+            DLQ_FOUND="si"
+            break
+        fi
+        sleep 1
+    done
+    if [ "$DLQ_FOUND" = "si" ]; then
+        pass "El mensaje veneno llego a q.cmd.email.dlq sin reintentos (profundidad ${BASELINE_DEPTH} -> ${EXPECTED_DEPTH})"
+    else
+        fail "El mensaje veneno no llego a la DLQ tras 10s (profundidad base=${BASELINE_DEPTH}, actual=${DEPTH})"
+    fi
+fi
 
 echo
 echo "=========================================="

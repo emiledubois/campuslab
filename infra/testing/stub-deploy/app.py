@@ -14,6 +14,7 @@ exercises are only ever run for real against the real BFF/Entra).
 """
 
 import os
+import re
 
 from flask import Flask, jsonify, request
 
@@ -41,6 +42,15 @@ QUEUE_NAMES = [
 ]
 DLQ_NAMES = {"q.cmd.email.dlq", "q.cmd.prep.dlq", "q.cmd.voucher.dlq"}
 TOPIC_NAMES = ["bookings.events", "audit.timeline"]
+
+# docs/designs/mq-admin-endpoints.md (Slice A) - the exchange names RabbitTopologyConfig
+# declares. Mirrors QUEUE_NAMES' role: any create/delete/purge/binding call touching one
+# of these (or a name in QUEUE_NAMES) must be rejected the same way the real
+# RabbitAdminService rejects it, never silently allowed.
+EXCHANGE_NAMES = {"cmd.direct", "cmd.topic", "cmd.dead.dlx"}
+NAME_PATTERN = re.compile(r"^(?!amq\.)[A-Za-z0-9_.:-]{1,255}$")
+EXCHANGE_TYPES = {"direct", "topic", "fanout", "headers"}
+PROTECTED_DETAIL = "is managed by the base RabbitMQ topology and must not be modified via this endpoint"
 
 app = Flask(__name__)
 state = {"mode": "healthy"}
@@ -133,6 +143,122 @@ def kafka_topics():
             }
         )
     return jsonify(topics)
+
+
+def _protected_response(name: str):
+    return jsonify({"detail": f"'{name}' {PROTECTED_DETAIL}"}), 409
+
+
+# docs/designs/mq-admin-endpoints.md (Slice A) - the seven new admin endpoints, mirrored
+# here only closely enough to prove scripts/verify-deploy.sh's own request/response
+# handling (status codes, body shapes it reads) against a stub, never as a real
+# RabbitMQ double - no state is actually created/destroyed, no mode in ALLOWED_MODES
+# changes this behaviour (these routes don't participate in the health/topology/drift
+# scenario table at all).
+@app.post("/api/admin/mq/queues")
+def create_queue():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    name = body.get("name") or ""
+    if not NAME_PATTERN.match(name):
+        return jsonify({"detail": "name: must not be blank"}), 400
+    if name in QUEUE_NAMES:
+        return _protected_response(name)
+    return (
+        jsonify(
+            {
+                "name": name,
+                "durable": True,
+                "exclusive": False,
+                "autoDelete": False,
+                "messageCount": 0,
+                "consumerCount": 0,
+            }
+        ),
+        201,
+    )
+
+
+@app.delete("/api/admin/mq/queues/<name>")
+def delete_queue(name):
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    if name in QUEUE_NAMES:
+        return _protected_response(name)
+    return "", 204
+
+
+@app.post("/api/admin/mq/queues/<name>/purge")
+def purge_queue(name):
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    if name in QUEUE_NAMES:
+        return _protected_response(name)
+    return jsonify({"purgedMessageCount": 0}), 200
+
+
+@app.post("/api/admin/mq/exchanges")
+def create_exchange():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    name = body.get("name") or ""
+    exchange_type = body.get("type") or ""
+    if not NAME_PATTERN.match(name):
+        return jsonify({"detail": "name: must not be blank"}), 400
+    if exchange_type not in EXCHANGE_TYPES:
+        return jsonify({"detail": "type: must be one of: direct, topic, fanout, headers"}), 400
+    if name in EXCHANGE_NAMES:
+        return _protected_response(name)
+    return jsonify({"name": name, "type": exchange_type, "durable": True, "autoDelete": False}), 201
+
+
+@app.delete("/api/admin/mq/exchanges/<name>")
+def delete_exchange(name):
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    if name in EXCHANGE_NAMES:
+        return _protected_response(name)
+    return "", 204
+
+
+def _binding_request_body():
+    body = request.get_json(silent=True) or {}
+    return body.get("source") or "", body.get("destination") or ""
+
+
+@app.post("/api/admin/mq/bindings")
+def create_binding():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    source, destination = _binding_request_body()
+    if not NAME_PATTERN.match(source) or not NAME_PATTERN.match(destination):
+        return jsonify({"detail": "source/destination: must not be blank"}), 400
+    if source in EXCHANGE_NAMES or destination in QUEUE_NAMES:
+        return _protected_response(f"{source} -> {destination}")
+    body = request.get_json(silent=True) or {}
+    return (
+        jsonify(
+            {
+                "source": source,
+                "destination": destination,
+                "destinationType": body.get("destinationType", "QUEUE"),
+                "routingKey": body.get("routingKey"),
+            }
+        ),
+        201,
+    )
+
+
+@app.delete("/api/admin/mq/bindings")
+def delete_binding():
+    if not _authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    source, destination = _binding_request_body()
+    if source in EXCHANGE_NAMES or destination in QUEUE_NAMES:
+        return _protected_response(f"{source} -> {destination}")
+    return "", 204
 
 
 @app.post("/control/mode")

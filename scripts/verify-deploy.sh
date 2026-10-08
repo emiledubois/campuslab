@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # docs/designs/aws-deployment.md Part 4 - a single command a human runs against a live
 # deployment (direct BFF or the API Gateway invoke URL) to sanity-check all eight
-# services' health, RabbitMQ/Kafka topology, and four structural negative-auth cases,
-# before trusting it in front of the class. Read-only by construction (A04): every
-# check is a GET, no state-changing call is ever made.
+# services' health, RabbitMQ/Kafka topology, structural negative-auth cases, and (since
+# docs/designs/mq-admin-endpoints.md, Slice A) the admin create/delete/purge endpoints -
+# before trusting it in front of the class.
+#
+# Checks 0-8 are read-only by construction (A04): every one of them is a GET, no
+# state-changing call is ever made. Checks 9-11 are a deliberate, documented exception:
+# the only way to verify a POST/DELETE endpoint actually works is to call it. Every
+# resource these checks create, they also delete before returning (confirmed via each
+# step's own HTTP status, never assumed), using a timestamped, obviously-disposable
+# probe name that can't collide with anything the demo/case topology declares.
 #
 # This script never mints, fetches, or derives the bearer token from anything other
 # than its own second CLI argument (§7 A02/A09) - obtaining a real one (a real login,
@@ -84,6 +91,29 @@ http_get() {
 
 auth_header_for_token() {
     echo "Authorization: Bearer $1"
+}
+
+# http_call <method> <path> <json-body-or-empty> - like http_get but for the admin
+# endpoints' POST/DELETE verbs, same connectivity/timeout contract and the same
+# HTTP_STATUS/HTTP_BODY globals. Always sends the bearer token - every endpoint this is
+# used against is ADMIN-only.
+http_call() {
+    local method="$1" path="$2" body="$3"
+    local url="${BASE_URL}${path}"
+    local -a curl_args=(-sS -w '\n%{http_code}' --connect-timeout "$CONNECT_TIMEOUT" --max-time "$MAX_TIME" \
+        -X "$method" -H "$(auth_header_for_token "$TOKEN")" "$url")
+    if [ -n "$body" ]; then
+        curl_args+=(-H 'Content-Type: application/json' -d "$body")
+    fi
+    local response
+    response="$(curl "${curl_args[@]}" 2>/dev/null)"
+    local curl_exit=$?
+    if [ "$curl_exit" -ne 0 ]; then
+        return 1
+    fi
+    HTTP_STATUS="$(echo "$response" | tail -n1)"
+    HTTP_BODY="$(echo "$response" | sed '$d')"
+    return 0
 }
 
 # Check 0 - connectivity/BFF health. Fail here aborts immediately with exit 2: there is
@@ -271,6 +301,103 @@ check_negative_auth() {
     evaluate_negative_case "auth-tampered" "$url" "Authorization: Bearer ${tampered}" "tampered signature"
 }
 
+# Check 9 - admin create/delete lifecycle (docs/designs/mq-admin-endpoints.md): create a
+# disposable queue+exchange+binding, then tear all three back down, each step verified by
+# its own HTTP status. Uses a timestamped probe name so repeated runs never collide with
+# a previous run's leftovers or with anything the real topology declares.
+check_mq_admin_lifecycle() {
+    local suffix queue exchange binding_body
+    suffix="$(date +%s)"
+    queue="verify-deploy.probe.queue.${suffix}"
+    exchange="verify-deploy.probe.exchange.${suffix}"
+    binding_body="{\"source\":\"${exchange}\",\"destination\":\"${queue}\",\"destinationType\":\"QUEUE\",\"routingKey\":\"probe\"}"
+
+    if ! http_call POST "/api/admin/mq/queues" "{\"name\":\"${queue}\",\"durable\":true}"; then
+        log_check "mq-admin-create-queue" "FAIL" "POST /api/admin/mq/queues unreachable or timed out"
+    elif [ "$HTTP_STATUS" = "201" ]; then
+        log_check "mq-admin-create-queue" "PASS" "created disposable queue ${queue}"
+    else
+        log_check "mq-admin-create-queue" "FAIL" "POST /api/admin/mq/queues returned httpStatus=${HTTP_STATUS}, expected 201"
+    fi
+
+    if ! http_call POST "/api/admin/mq/exchanges" "{\"name\":\"${exchange}\",\"type\":\"direct\"}"; then
+        log_check "mq-admin-create-exchange" "FAIL" "POST /api/admin/mq/exchanges unreachable or timed out"
+    elif [ "$HTTP_STATUS" = "201" ]; then
+        log_check "mq-admin-create-exchange" "PASS" "created disposable exchange ${exchange}"
+    else
+        log_check "mq-admin-create-exchange" "FAIL" "POST /api/admin/mq/exchanges returned httpStatus=${HTTP_STATUS}, expected 201"
+    fi
+
+    if ! http_call POST "/api/admin/mq/bindings" "$binding_body"; then
+        log_check "mq-admin-create-binding" "FAIL" "POST /api/admin/mq/bindings unreachable or timed out"
+    elif [ "$HTTP_STATUS" = "201" ]; then
+        log_check "mq-admin-create-binding" "PASS" "bound ${exchange} -> ${queue}"
+    else
+        log_check "mq-admin-create-binding" "FAIL" "POST /api/admin/mq/bindings returned httpStatus=${HTTP_STATUS}, expected 201"
+    fi
+
+    if ! http_call POST "/api/admin/mq/queues/${queue}/purge" ""; then
+        log_check "mq-admin-purge-queue" "FAIL" "POST /api/admin/mq/queues/${queue}/purge unreachable or timed out"
+    elif [ "$HTTP_STATUS" = "200" ]; then
+        log_check "mq-admin-purge-queue" "PASS" "purged disposable queue ${queue}"
+    else
+        log_check "mq-admin-purge-queue" "FAIL" "POST /api/admin/mq/queues/${queue}/purge returned httpStatus=${HTTP_STATUS}, expected 200"
+    fi
+
+    # Teardown - attempted regardless of the create steps' outcomes above, so a probe
+    # resource that *did* get created is never left behind just because a later create
+    # step failed.
+    if ! http_call DELETE "/api/admin/mq/bindings" "$binding_body"; then
+        log_check "mq-admin-delete-binding" "FAIL" "DELETE /api/admin/mq/bindings unreachable or timed out"
+    elif [ "$HTTP_STATUS" = "204" ]; then
+        log_check "mq-admin-delete-binding" "PASS" "unbound ${exchange} -> ${queue}"
+    else
+        log_check "mq-admin-delete-binding" "FAIL" "DELETE /api/admin/mq/bindings returned httpStatus=${HTTP_STATUS}, expected 204"
+    fi
+
+    if ! http_call DELETE "/api/admin/mq/queues/${queue}" ""; then
+        log_check "mq-admin-delete-queue" "FAIL" "DELETE /api/admin/mq/queues/${queue} unreachable or timed out"
+    elif [ "$HTTP_STATUS" = "204" ]; then
+        log_check "mq-admin-delete-queue" "PASS" "deleted disposable queue ${queue}"
+    else
+        log_check "mq-admin-delete-queue" "FAIL" "DELETE /api/admin/mq/queues/${queue} returned httpStatus=${HTTP_STATUS}, expected 204"
+    fi
+
+    if ! http_call DELETE "/api/admin/mq/exchanges/${exchange}" ""; then
+        log_check "mq-admin-delete-exchange" "FAIL" "DELETE /api/admin/mq/exchanges/${exchange} unreachable or timed out"
+    elif [ "$HTTP_STATUS" = "204" ]; then
+        log_check "mq-admin-delete-exchange" "PASS" "deleted disposable exchange ${exchange}"
+    else
+        log_check "mq-admin-delete-exchange" "FAIL" "DELETE /api/admin/mq/exchanges/${exchange} returned httpStatus=${HTTP_STATUS}, expected 204"
+    fi
+}
+
+# Check 10 - validation: an empty queue name must be rejected with 400, not accepted or
+# turned into a 500.
+check_mq_admin_validation() {
+    if ! http_call POST "/api/admin/mq/queues" '{"name":""}'; then
+        log_check "mq-admin-validation" "FAIL" "POST /api/admin/mq/queues (empty name) unreachable or timed out"
+    elif [ "$HTTP_STATUS" = "400" ]; then
+        log_check "mq-admin-validation" "PASS" "empty queue name rejected with 400"
+    else
+        log_check "mq-admin-validation" "FAIL" "POST /api/admin/mq/queues (empty name) returned httpStatus=${HTTP_STATUS}, expected 400"
+    fi
+}
+
+# Check 11 - topology protection: deleting a name MqTopology declares (q.cmd.email) must
+# be rejected with 409, never silently succeed. A 204 here is scored FAIL and is the one
+# result in this whole script that means something is actually wrong with the live
+# deployment's managed topology, not just with this check.
+check_mq_admin_protection() {
+    if ! http_call DELETE "/api/admin/mq/queues/q.cmd.email" ""; then
+        log_check "mq-admin-protection" "FAIL" "DELETE /api/admin/mq/queues/q.cmd.email unreachable or timed out"
+    elif [ "$HTTP_STATUS" = "409" ]; then
+        log_check "mq-admin-protection" "PASS" "managed queue q.cmd.email correctly rejected with 409"
+    else
+        log_check "mq-admin-protection" "FAIL" "DELETE /api/admin/mq/queues/q.cmd.email returned httpStatus=${HTTP_STATUS}, expected 409 (if this was 204, the managed topology may actually have been deleted - check immediately)"
+    fi
+}
+
 main() {
     check_connectivity
 
@@ -282,6 +409,9 @@ main() {
     check_notify
     check_kafka
     check_negative_auth
+    check_mq_admin_lifecycle
+    check_mq_admin_validation
+    check_mq_admin_protection
 
     print_outcome
     if [ "$FAIL_COUNT" -gt 0 ]; then
