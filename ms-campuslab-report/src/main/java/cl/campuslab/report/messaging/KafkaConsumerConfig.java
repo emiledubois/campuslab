@@ -9,6 +9,7 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -91,7 +92,8 @@ public class KafkaConsumerConfig {
     }
 
     @Bean
-    public KafkaTemplate<String, Object> dltJsonKafkaTemplate(ProducerFactory<String, Object> dltJsonProducerFactory) {
+    public KafkaTemplate<String, Object> dltJsonKafkaTemplate(
+            @Qualifier("dltJsonProducerFactory") ProducerFactory<String, Object> dltJsonProducerFactory) {
         return new KafkaTemplate<>(dltJsonProducerFactory);
     }
 
@@ -105,7 +107,8 @@ public class KafkaConsumerConfig {
      */
     @Bean
     public DeadLetterPublishingRecoverer deadLetterPublishingRecoverer(
-            KafkaTemplate<String, byte[]> dltRawKafkaTemplate, KafkaTemplate<String, Object> dltJsonKafkaTemplate) {
+            @Qualifier("dltRawKafkaTemplate") KafkaTemplate<String, byte[]> dltRawKafkaTemplate,
+            @Qualifier("dltJsonKafkaTemplate") KafkaTemplate<String, Object> dltJsonKafkaTemplate) {
         Map<Class<?>, KafkaOperations<?, ?>> templates = new LinkedHashMap<>();
         templates.put(byte[].class, dltRawKafkaTemplate);
         templates.put(BookingStreamEnvelope.class, dltJsonKafkaTemplate);

@@ -8,9 +8,20 @@ import cl.campuslab.audit.domain.TimelineEvent;
 import cl.campuslab.audit.domain.TimelineEventRepository;
 import java.time.Duration;
 import java.time.Instant;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -44,6 +55,7 @@ class AuditKafkaConsumerApiTest extends AbstractIntegrationTest {
     private static final ConfluentKafkaContainer KAFKA = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.9.9");
     private static KafkaProducer<String, String> jsonProducer;
     private static KafkaProducer<String, byte[]> rawProducer;
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     static {
         KAFKA.start();
@@ -67,7 +79,9 @@ class AuditKafkaConsumerApiTest extends AbstractIntegrationTest {
     }
 
     @BeforeAll
-    static void startProducers() {
+    static void startProducers() throws Exception {
+        createAuditTimelineTopic();
+
         Properties jsonProps = new Properties();
         jsonProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
         jsonProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
@@ -158,6 +172,120 @@ class AuditKafkaConsumerApiTest extends AbstractIntegrationTest {
         await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertThat(repository.existsByEventId(eventId)).isTrue());
     }
 
+    // audit-timeline-compacted.md §9 AC 11: el topico se crea aqui, igual que kafka-admin
+    // (3 particiones, compact,delete), sin depender del auto-create del broker de test.
+    private static void createAuditTimelineTopic() throws Exception {
+        Properties props = new Properties();
+        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        try (Admin admin = Admin.create(props)) {
+            NewTopic topic = new NewTopic(TimelineStatePublisher.TOPIC_AUDIT_TIMELINE, 3, (short) 1)
+                    .configs(Map.of(TopicConfig.CLEANUP_POLICY_CONFIG, "compact,delete",
+                            TopicConfig.RETENTION_MS_CONFIG, "1814400000"));
+            admin.createTopics(List.of(topic)).all().get(10, TimeUnit.SECONDS);
+        } catch (ExecutionException ex) {
+            if (!(ex.getCause() instanceof TopicExistsException)) {
+                throw ex;
+            }
+        }
+    }
+
+    @Test
+    void validFact_producesSnapshotOnAuditTimelineKeyedByBookingId() throws Exception {
+        // Arrange
+        UUID bookingId = UUID.randomUUID();
+        String eventId = UUID.randomUUID().toString();
+        String envelope = wellFormedEnvelopeJson(eventId, bookingId, BookingStreamEventType.BOOKING_APROBADA,
+                "SOLICITADA", "APROBADA", Instant.now());
+
+        // Act
+        jsonProducer.send(new ProducerRecord<>("bookings.events", bookingId.toString(), envelope));
+
+        // Assert
+        List<ConsumerRecord<String, String>> snapshots = pollTimeline(bookingId.toString(), 1, Duration.ofSeconds(20));
+        assertThat(snapshots).hasSize(1);
+        assertThat(snapshots.get(0).key()).isEqualTo(bookingId.toString());
+        JsonNode snapshot = JSON.readTree(snapshots.get(0).value());
+        assertThat(snapshot.get("type").asText()).isEqualTo("BOOKING_STATE_SNAPSHOT");
+        assertThat(snapshot.get("eventId").asText()).isEqualTo(BookingStateSnapshotMapper.derivedEventId(eventId));
+        assertThat(snapshot.get("payload").get("bookingId").asText()).isEqualTo(bookingId.toString());
+        assertThat(snapshot.get("payload").get("currentStatus").asText()).isEqualTo("APROBADA");
+        assertThat(snapshot.get("payload").get("lastEventType").asText()).isEqualTo("BOOKING_APROBADA");
+        assertThat(snapshots.get(0).headers().lastHeader("__TypeId__")).isNull();
+    }
+
+    @Test
+    void twoFactsOfSameBooking_produceTwoSnapshotsWithSameKeyInOrder() throws Exception {
+        // Arrange
+        UUID bookingId = UUID.randomUUID();
+        Instant t1 = Instant.now();
+        String first = wellFormedEnvelopeJson(UUID.randomUUID().toString(), bookingId,
+                BookingStreamEventType.BOOKING_APROBADA, "SOLICITADA", "APROBADA", t1);
+        String second = wellFormedEnvelopeJson(UUID.randomUUID().toString(), bookingId,
+                BookingStreamEventType.BOOKING_EN_PREPARACION, "APROBADA", "EN_PREPARACION", t1.plusSeconds(5));
+
+        // Act
+        jsonProducer.send(new ProducerRecord<>("bookings.events", bookingId.toString(), first));
+        jsonProducer.send(new ProducerRecord<>("bookings.events", bookingId.toString(), second));
+
+        // Assert
+        List<ConsumerRecord<String, String>> snapshots = pollTimeline(bookingId.toString(), 2, Duration.ofSeconds(20));
+        assertThat(snapshots).hasSize(2);
+        assertThat(snapshots).allSatisfy(record -> assertThat(record.key()).isEqualTo(bookingId.toString()));
+        assertThat(snapshots.get(0).partition()).isEqualTo(snapshots.get(1).partition());
+        assertThat(status(snapshots.get(0))).isEqualTo("APROBADA");
+        assertThat(status(snapshots.get(1))).isEqualTo("EN_PREPARACION");
+        assertThat(JSON.readTree(snapshots.get(0).value()).get("eventId").asText())
+                .isNotEqualTo(JSON.readTree(snapshots.get(1).value()).get("eventId").asText());
+    }
+
+    @Test
+    void redeliveryOfPersistedFact_addsNoRowButRepublishesSameDerivedEventId() throws Exception {
+        // Arrange
+        UUID bookingId = UUID.randomUUID();
+        String eventId = UUID.randomUUID().toString();
+        String envelope = wellFormedEnvelopeJson(eventId, bookingId, BookingStreamEventType.BOOKING_SOLICITADA,
+                null, "SOLICITADA", Instant.now());
+        publishAndWaitPersisted(bookingId, eventId, envelope);
+        pollTimeline(bookingId.toString(), 1, Duration.ofSeconds(20));
+
+        // Act
+        jsonProducer.send(new ProducerRecord<>("bookings.events", bookingId.toString(), envelope));
+
+        // Assert
+        List<ConsumerRecord<String, String>> snapshots = pollTimeline(bookingId.toString(), 2, Duration.ofSeconds(20));
+        assertThat(snapshots).hasSize(2);
+        String derived = BookingStateSnapshotMapper.derivedEventId(eventId);
+        assertThat(snapshots).allSatisfy(record ->
+                assertThat(JSON.readTree(record.value()).get("eventId").asText()).isEqualTo(derived));
+        assertThat(countByBookingId(bookingId)).isEqualTo(1);
+    }
+
+    @Test
+    void replayOfOlderFactAfterNewer_republishesNewerState() throws Exception {
+        // Arrange
+        UUID bookingId = UUID.randomUUID();
+        Instant t1 = Instant.now();
+        String t1EventId = UUID.randomUUID().toString();
+        String t2EventId = UUID.randomUUID().toString();
+        String t1Envelope = wellFormedEnvelopeJson(t1EventId, bookingId, BookingStreamEventType.BOOKING_APROBADA,
+                "SOLICITADA", "APROBADA", t1);
+        String t2Envelope = wellFormedEnvelopeJson(t2EventId, bookingId, BookingStreamEventType.BOOKING_EN_PREPARACION,
+                "APROBADA", "EN_PREPARACION", t1.plusSeconds(5));
+        publishAndWaitPersisted(bookingId, t1EventId, t1Envelope);
+        publishAndWaitPersisted(bookingId, t2EventId, t2Envelope);
+        pollTimeline(bookingId.toString(), 2, Duration.ofSeconds(20));
+
+        // Act
+        jsonProducer.send(new ProducerRecord<>("bookings.events", bookingId.toString(), t1Envelope));
+
+        // Assert
+        List<ConsumerRecord<String, String>> snapshots = pollTimeline(bookingId.toString(), 3, Duration.ofSeconds(20));
+        assertThat(snapshots).hasSize(3);
+        JsonNode republished = JSON.readTree(snapshots.get(2).value());
+        assertThat(republished.get("payload").get("currentStatus").asText()).isEqualTo("EN_PREPARACION");
+        assertThat(republished.get("eventId").asText()).isEqualTo(BookingStateSnapshotMapper.derivedEventId(t2EventId));
+    }
+
     private void publishAndWaitPersisted(UUID bookingId, String eventId, String envelope) {
         jsonProducer.send(new ProducerRecord<>("bookings.events", bookingId.toString(), envelope));
         await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertThat(repository.existsByEventId(eventId)).isTrue());
@@ -168,12 +296,51 @@ class AuditKafkaConsumerApiTest extends AbstractIntegrationTest {
     }
 
     private static String wellFormedEnvelopeJson(String eventId, UUID bookingId, String type, String from, String to) {
+        return wellFormedEnvelopeJson(eventId, bookingId, type, from, to, Instant.now());
+    }
+
+    private static String wellFormedEnvelopeJson(
+            String eventId, UUID bookingId, String type, String from, String to, Instant timestamp) {
         String fromJson = from == null ? "null" : "\"" + from + "\"";
-        return "{\"type\":\"" + type + "\",\"eventId\":\"" + eventId + "\",\"timestamp\":\"" + Instant.now()
+        return "{\"type\":\"" + type + "\",\"eventId\":\"" + eventId + "\",\"timestamp\":\"" + timestamp
                 + "\",\"traceId\":\"" + UUID.randomUUID() + "\",\"correlationId\":\"" + bookingId
                 + "\",\"payload\":{\"bookingId\":\"" + bookingId + "\",\"resourceId\":\"" + UUID.randomUUID()
                 + "\",\"studentOid\":\"student-oid\",\"actorOid\":\"tecnico-oid\",\"actorRoles\":[\"TECNICO\"],"
                 + "\"fromStatus\":" + fromJson + ",\"toStatus\":\"" + to + "\"}}";
+    }
+
+    private static String status(ConsumerRecord<String, String> record) throws Exception {
+        return JSON.readTree(record.value()).get("payload").get("currentStatus").asText();
+    }
+
+    private List<ConsumerRecord<String, String>> pollTimeline(String key, int minCount, Duration timeout) {
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "timeline-test-consumer-" + System.nanoTime());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        List<ConsumerRecord<String, String>> matched = new ArrayList<>();
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            consumer.subscribe(List.of(TimelineStatePublisher.TOPIC_AUDIT_TIMELINE));
+            long deadline = System.currentTimeMillis() + timeout.toMillis();
+            while (matched.size() < minCount && System.currentTimeMillis() < deadline) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
+                for (ConsumerRecord<String, String> record : records) {
+                    if (key.equals(record.key())) {
+                        matched.add(record);
+                    }
+                }
+            }
+            // Una vuelta extra para detectar registros de mas, no solo los minimos esperados.
+            for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofSeconds(1))) {
+                if (key.equals(record.key())) {
+                    matched.add(record);
+                }
+            }
+        }
+        matched.sort(java.util.Comparator.comparingLong(ConsumerRecord::offset));
+        return matched;
     }
 
     private List<ConsumerRecord<String, byte[]>> pollDlt(String key, int minCount, Duration timeout) {

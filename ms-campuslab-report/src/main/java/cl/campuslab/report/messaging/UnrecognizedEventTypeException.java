@@ -11,4 +11,8 @@ public class UnrecognizedEventTypeException extends RuntimeException {
     public UnrecognizedEventTypeException(String rawType) {
         super("Unrecognized bookings.events type: " + rawType);
     }
+
+    public UnrecognizedEventTypeException(String topic, String rawType) {
+        super("Unrecognized " + topic + " type: " + rawType);
+    }
 }

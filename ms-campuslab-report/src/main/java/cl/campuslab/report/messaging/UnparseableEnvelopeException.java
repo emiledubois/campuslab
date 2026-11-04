@@ -11,4 +11,8 @@ public class UnparseableEnvelopeException extends RuntimeException {
     public UnparseableEnvelopeException(String reason) {
         super("Unparseable bookings.events envelope: " + reason);
     }
+
+    public UnparseableEnvelopeException(String topic, String reason) {
+        super("Unparseable " + topic + " envelope: " + reason);
+    }
 }

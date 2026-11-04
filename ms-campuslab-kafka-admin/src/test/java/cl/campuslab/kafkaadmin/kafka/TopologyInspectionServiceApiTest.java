@@ -66,6 +66,27 @@ class TopologyInspectionServiceApiTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void listTopics_afterStartup_reportsTimelineProjectionDltAndCompactedAuditTimeline() {
+        // Arrange
+        topologyInspectionService.createAndVerifyAtStartup();
+
+        // Act
+        List<TopicInfo> topics = topologyInspectionService.listTopics();
+
+        // Assert
+        TopicInfo projectionDlt = topics.stream()
+                .filter(topic -> topic.name().equals(KafkaTopology.DLT_AUDIT_TIMELINE_REPORT_TIMELINE_PROJECTION))
+                .findFirst().orElseThrow();
+        assertThat(projectionDlt.configMatches()).isTrue();
+        assertThat(projectionDlt.actualPartitions()).isEqualTo(3);
+        TopicInfo auditTimeline = topics.stream()
+                .filter(topic -> topic.name().equals(KafkaTopology.TOPIC_AUDIT_TIMELINE))
+                .findFirst().orElseThrow();
+        assertThat(auditTimeline.actualCleanupPolicy()).isEqualTo("compact,delete");
+        assertThat(auditTimeline.configMatches()).isTrue();
+    }
+
+    @Test
     void listTopics_afterConfigDriftsFromExpected_reportsConfigMismatchWithoutThrowing() throws Exception {
         topologyInspectionService.createAndVerifyAtStartup();
         ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, KafkaTopology.TOPIC_BOOKINGS_EVENTS);

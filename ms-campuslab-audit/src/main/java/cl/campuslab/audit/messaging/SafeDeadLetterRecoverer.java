@@ -51,7 +51,8 @@ public class SafeDeadLetterRecoverer implements ConsumerRecordRecoverer {
      * surfaces as a {@code DataAccessException} (mid-transaction) or a {@code
      * CannotCreateTransactionException} (a {@code TransactionException}, thrown at
      * transaction-start when Postgres is unreachable, not a DataAccessException
-     * subtype - the bug QA caught live).
+     * subtype - the bug QA caught live). Excepcion: {@link TimelinePublishException} es
+     * reintentable pero no es de base; tiene su propia razon (audit-timeline-compacted.md §5.3.4).
      */
     static String reasonFor(Exception exception) {
         Throwable cause = exception;
@@ -64,6 +65,9 @@ public class SafeDeadLetterRecoverer implements ConsumerRecordRecoverer {
             }
             if (cause instanceof UnrecognizedEventTypeException) {
                 return "UNRECOGNIZED_TYPE";
+            }
+            if (cause instanceof TimelinePublishException) {
+                return "TIMELINE_PUBLISH_FAILED";
             }
             cause = cause.getCause();
         }

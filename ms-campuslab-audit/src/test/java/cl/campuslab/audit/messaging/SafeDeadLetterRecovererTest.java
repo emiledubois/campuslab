@@ -86,6 +86,31 @@ class SafeDeadLetterRecovererTest {
     }
 
     @Test
+    void reasonFor_timelinePublishException_classifiedAsTimelinePublishFailed() {
+        // Arrange
+        TimelinePublishException exception = new TimelinePublishException("b-1", new RuntimeException("broker down"));
+
+        // Act
+        String reason = SafeDeadLetterRecoverer.reasonFor(exception);
+
+        // Assert
+        assertThat(reason).isEqualTo("TIMELINE_PUBLISH_FAILED");
+    }
+
+    @Test
+    void reasonFor_timelinePublishExceptionWrappedByListener_classifiedAsTimelinePublishFailed() {
+        // Arrange
+        RuntimeException exception = new RuntimeException("listener invocation failed",
+                new TimelinePublishException("b-1", new RuntimeException("timeout")));
+
+        // Act
+        String reason = SafeDeadLetterRecoverer.reasonFor(exception);
+
+        // Assert
+        assertThat(reason).isEqualTo("TIMELINE_PUBLISH_FAILED");
+    }
+
+    @Test
     void accept_delegatesToDeadLetterPublishingRecoverer() {
         DeadLetterPublishingRecoverer delegate = mock(DeadLetterPublishingRecoverer.class);
         SafeDeadLetterRecoverer recoverer = new SafeDeadLetterRecoverer(delegate);
