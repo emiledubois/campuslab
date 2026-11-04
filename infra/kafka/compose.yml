@@ -121,6 +121,17 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Brokers del perfil deploy: dos listeners por broker.
+  # - INTERNAL (0.0.0.0:29092, anunciado como kafka-N:29092): solo dentro de la red Docker
+  #   campuslab-net. Lo usan la replicacion entre brokers, kafka-ui-deploy, el healthcheck y
+  #   cualquier cliente en la misma red. Fijo, no configurable, nunca publicado al host.
+  # - EXTERNAL (0.0.0.0:9092 en el contenedor, publicado en KAFKA_BROKER_N_ADVERTISED_PORT):
+  #   para clientes de otro host (p. ej. ec2-apps). Anuncia
+  #   KAFKA_BROKER_N_ADVERTISED_HOST:KAFKA_BROKER_N_ADVERTISED_PORT; el puerto de contenedor
+  #   es siempre 9092 y la misma variable fija el lado host del mapeo y el puerto anunciado.
+  # Un cliente nunca mezcla listeners (p. ej. kafka-1:9092 no es una configuracion soportada).
+  # Con esto el perfil levanta tal cual: no se necesita ningun archivo override.
+  # Ver docs/designs/kafka-compose-listeners.md.
   kafka-1:
     image: confluentinc/cp-kafka:7.9.9
     profiles: ["deploy"]
@@ -130,18 +141,24 @@ services:
       zookeeper-2: { condition: service_healthy }
       zookeeper-3: { condition: service_healthy }
     ports:
+      # Solo el listener EXTERNAL se publica. INTERNAL (29092) nunca se publica al host.
       - "${KAFKA_BROKER_1_ADVERTISED_PORT:-9092}:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_BROKER_1_ADVERTISED_HOST:-kafka-1}:${KAFKA_BROKER_1_ADVERTISED_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:29092,EXTERNAL://${KAFKA_BROKER_1_ADVERTISED_HOST:-localhost}:${KAFKA_BROKER_1_ADVERTISED_PORT:-9092}
+      # Obligatorio: sin listener PLAINTEXT, Kafka no sabe por donde replicar y no arranca.
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     networks:
       - campuslab-net
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      # INTERNAL: el broker responde y la metadata que devuelve es resoluble en la red.
+      # EXTERNAL: el puerto 9092 del contenedor (el que se publica) esta escuchando.
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null && nc -z -w 2 localhost 9092"]
       interval: 10s
       timeout: 10s
       retries: 15
@@ -156,18 +173,24 @@ services:
       zookeeper-2: { condition: service_healthy }
       zookeeper-3: { condition: service_healthy }
     ports:
+      # Solo el listener EXTERNAL se publica. INTERNAL (29092) nunca se publica al host.
       - "${KAFKA_BROKER_2_ADVERTISED_PORT:-9093}:9092"
     environment:
       KAFKA_BROKER_ID: 2
       KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_BROKER_2_ADVERTISED_HOST:-kafka-2}:${KAFKA_BROKER_2_ADVERTISED_PORT:-9093}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:29092,EXTERNAL://${KAFKA_BROKER_2_ADVERTISED_HOST:-localhost}:${KAFKA_BROKER_2_ADVERTISED_PORT:-9093}
+      # Obligatorio: sin listener PLAINTEXT, Kafka no sabe por donde replicar y no arranca.
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     networks:
       - campuslab-net
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      # INTERNAL: el broker responde y la metadata que devuelve es resoluble en la red.
+      # EXTERNAL: el puerto 9092 del contenedor (el que se publica) esta escuchando.
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null && nc -z -w 2 localhost 9092"]
       interval: 10s
       timeout: 10s
       retries: 15
@@ -182,18 +205,24 @@ services:
       zookeeper-2: { condition: service_healthy }
       zookeeper-3: { condition: service_healthy }
     ports:
+      # Solo el listener EXTERNAL se publica. INTERNAL (29092) nunca se publica al host.
       - "${KAFKA_BROKER_3_ADVERTISED_PORT:-9094}:9092"
     environment:
       KAFKA_BROKER_ID: 3
       KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_BROKER_3_ADVERTISED_HOST:-kafka-3}:${KAFKA_BROKER_3_ADVERTISED_PORT:-9094}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:29092,EXTERNAL://${KAFKA_BROKER_3_ADVERTISED_HOST:-localhost}:${KAFKA_BROKER_3_ADVERTISED_PORT:-9094}
+      # Obligatorio: sin listener PLAINTEXT, Kafka no sabe por donde replicar y no arranca.
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     networks:
       - campuslab-net
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      # INTERNAL: el broker responde y la metadata que devuelve es resoluble en la red.
+      # EXTERNAL: el puerto 9092 del contenedor (el que se publica) esta escuchando.
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null && nc -z -w 2 localhost 9092"]
       interval: 10s
       timeout: 10s
       retries: 15
@@ -209,7 +238,7 @@ services:
       kafka-3: { condition: service_healthy }
     environment:
       KAFKA_CLUSTERS_0_NAME: campuslab
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181
     networks:
       - campuslab-net
