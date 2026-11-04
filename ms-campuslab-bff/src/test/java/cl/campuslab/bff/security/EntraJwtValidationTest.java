@@ -2,6 +2,7 @@ package cl.campuslab.bff.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.nimbusds.jose.JOSEException;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -220,6 +222,54 @@ class EntraJwtValidationTest {
 
         mockMvc.perform(get("/api/admin/ping").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
+    }
+
+    // --- kafka-admin-write.md AC34: ruta nueva con escritura, decoder real ---
+
+    private static final String CREATE_TOPIC_BODY = "{\"name\":\"demo.ops.topic\",\"partitions\":1}";
+
+    @Test
+    void postKafkaTopics_withTecnicoRole_returns403() throws Exception {
+        // Arrange
+        String token = mintSignedToken(
+                ISSUER, AUDIENCE, "sub-1", "oid-1", List.of("TECNICO"),
+                Instant.now(), Instant.now().minusSeconds(60), Instant.now().plusSeconds(300));
+
+        // Act + Assert
+        mockMvc.perform(post("/api/admin/kafka/topics").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(CREATE_TOPIC_BODY))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void postKafkaTopics_withAdminRoleButWrongAudience_returns401() throws Exception {
+        // Arrange
+        String token = mintSignedToken(
+                ISSUER, "api://wrong-audience", "sub-1", "oid-1", List.of("ADMIN"),
+                Instant.now(), Instant.now().minusSeconds(60), Instant.now().plusSeconds(300));
+
+        // Act + Assert
+        mockMvc.perform(post("/api/admin/kafka/topics").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(CREATE_TOPIC_BODY))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void postKafkaTopics_withValidAdminToken_passesSecurityChainAndAttemptsToForward() throws Exception {
+        // Arrange
+        String token = mintSignedToken(
+                ISSUER, AUDIENCE, "sub-1", "oid-1", List.of("ADMIN"),
+                Instant.now(), Instant.now().minusSeconds(60), Instant.now().plusSeconds(300));
+
+        // Act
+        int status = mockMvc.perform(post("/api/admin/kafka/topics").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(CREATE_TOPIC_BODY))
+                .andReturn().getResponse().getStatus();
+
+        // Assert
+        // kafka-admin.service-url apunta a un host .test irresoluble en este contexto: el 503
+        // del facade prueba que la cadena de seguridad acepto el token y se intento reenviar.
+        assertThat(status).isNotIn(401, 403).isEqualTo(503);
     }
 
     private static JWTClaimsSet.Builder claimsBuilder(

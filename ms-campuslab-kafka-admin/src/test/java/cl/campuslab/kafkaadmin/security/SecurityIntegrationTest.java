@@ -2,22 +2,32 @@ package cl.campuslab.kafkaadmin.security;
 
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import cl.campuslab.kafkaadmin.AbstractIntegrationTest;
 import java.time.Instant;
 import java.util.List;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
 import org.springframework.security.oauth2.jwt.BadJwtException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
  * Exercises kafka-admin's own resource-server filter chain independently of the BFF
@@ -124,6 +134,51 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"))
                 .andExpect(jsonPath("$.components").doesNotExist());
+    }
+
+    // --- kafka-admin-write.md AC33: las 6 rutas nuevas con escritura ---
+
+    static Stream<Supplier<MockHttpServletRequestBuilder>> rutasDeEscrituraSinToken() {
+        return Stream.of(
+                () -> post("/api/admin/kafka/topics").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"demo.sec.topic\",\"partitions\":1}"),
+                () -> delete("/api/admin/kafka/topics/demo.sec.topic"),
+                () -> patch("/api/admin/kafka/topics/demo.sec.topic/config").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configs\":{\"retention.ms\":\"86400000\"}}"),
+                () -> post("/api/admin/kafka/topics/demo.sec.topic/partitions").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"totalCount\":2}"),
+                () -> delete("/api/admin/kafka/consumer-groups/demo.sec.group"),
+                () -> post("/api/admin/kafka/consumer-groups/demo.sec.group/reset-offsets")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"topic\":\"demo.sec.topic\",\"strategy\":\"EARLIEST\"}"));
+    }
+
+    static Stream<Arguments> rutasDeEscritura() {
+        return rutasDeEscrituraSinToken().flatMap(request -> Stream.of(
+                Arguments.of(request, "tecnico-token", "TECNICO"),
+                Arguments.of(request, "estudiante-token", "ESTUDIANTE"),
+                Arguments.of(request, "auditor-token", "AUDITOR")));
+    }
+
+    @ParameterizedTest
+    @MethodSource("rutasDeEscrituraSinToken")
+    void rutasDeEscritura_sinToken_retornan401(Supplier<MockHttpServletRequestBuilder> request) throws Exception {
+        // Act + Assert
+        mockMvc.perform(request.get())
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.stackTrace").doesNotExist());
+    }
+
+    @ParameterizedTest
+    @MethodSource("rutasDeEscritura")
+    void rutasDeEscritura_conRolDistintoDeAdmin_retornan403(
+            Supplier<MockHttpServletRequestBuilder> request, String token, String role) throws Exception {
+        // Arrange
+        given(jwtDecoder.decode(token)).willReturn(jwt(role.toLowerCase() + "-uuid", List.of(role)));
+
+        // Act + Assert
+        mockMvc.perform(request.get().header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden());
     }
 
     private static Jwt jwt(String subject, List<String> roles) {

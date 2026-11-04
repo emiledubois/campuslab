@@ -34,7 +34,12 @@ import org.springframework.context.annotation.Lazy;
  * {@code Admin} anywhere in this service must also be annotated {@code @Lazy}, or Spring's
  * {@code preInstantiateSingletons()} resolves it eagerly regardless of this bean's own
  * laziness (docs/designs/aws-deployment.md Revision 4). Nothing enforces this
- * structurally - check this Javadoc before adding a fifth {@code Admin} consumer.
+ * structurally - check this Javadoc before adding a sixth {@code Admin} consumer.
+ *
+ * <p>Consumidores actuales de {@code Admin} (cinco, todos con {@code @Lazy} en el punto de
+ * inyeccion): {@code TopologyInspectionService}, {@code KafkaReachabilityChecker},
+ * {@code ConsumerGroupInspectionService}, {@code DltInspectionService} y
+ * {@code KafkaAdminService} (kafka-admin-write.md §6).
  */
 @Configuration
 @EnableConfigurationProperties(KafkaAdminProperties.class)

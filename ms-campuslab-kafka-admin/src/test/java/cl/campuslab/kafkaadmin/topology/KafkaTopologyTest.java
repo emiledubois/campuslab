@@ -79,6 +79,58 @@ class KafkaTopologyTest {
         assertThat(spec.retentionMs()).isEqualTo(1_814_400_000L);
     }
 
+    @Test
+    void isManagedTopic_verdaderoParaLosCincoYFalsoParaUnoAdHoc() {
+        // Arrange
+        List<String> managed = KafkaTopology.ALL_TOPICS.stream().map(TopicSpec::name).toList();
+
+        // Act + Assert
+        assertThat(managed).hasSize(5).allSatisfy(name -> assertThat(KafkaTopology.isManagedTopic(name)).isTrue());
+        assertThat(KafkaTopology.isManagedTopic("demo.ops.topic")).isFalse();
+        assertThat(KafkaTopology.isManagedTopic(null)).isFalse();
+    }
+
+    @Test
+    void collidingManagedTopic_detectaColisionPuntoGuionBajoPeroNoElNombreExacto() {
+        // Act
+        Optional<String> colliding = KafkaTopology.collidingManagedTopic("bookings_events");
+        Optional<String> exact = KafkaTopology.collidingManagedTopic("bookings.events");
+        Optional<String> unrelated = KafkaTopology.collidingManagedTopic("demo.ops.topic");
+
+        // Assert
+        assertThat(colliding).contains("bookings.events");
+        assertThat(exact).isEmpty();
+        assertThat(unrelated).isEmpty();
+    }
+
+    @Test
+    void managedConsumerGroups_contieneLosTresGruposDelSistema() {
+        // Act
+        List<String> groups = KafkaTopology.MANAGED_CONSUMER_GROUPS;
+
+        // Assert
+        assertThat(groups).containsExactlyInAnyOrder("audit-service", "report-service", "report-timeline-projection");
+        assertThat(KafkaTopology.isManagedConsumerGroup("audit-service")).isTrue();
+        assertThat(KafkaTopology.isManagedConsumerGroup("demo.ops.group")).isFalse();
+    }
+
+    @Test
+    void dltNames_elGrupoDeCadaDltEstaEnManagedConsumerGroups() {
+        // Arrange
+        List<String> baseTopics = List.of(KafkaTopology.TOPIC_BOOKINGS_EVENTS, KafkaTopology.TOPIC_AUDIT_TIMELINE);
+
+        // Act
+        List<String> groupsInDlts = KafkaTopology.DLT_NAMES.stream()
+                .map(dlt -> {
+                    String base = baseTopics.stream().filter(topic -> dlt.startsWith(topic + ".")).findFirst().orElseThrow();
+                    return dlt.substring(base.length() + 1, dlt.length() - ".DLT".length());
+                })
+                .toList();
+
+        // Assert
+        assertThat(KafkaTopology.MANAGED_CONSUMER_GROUPS).containsAll(groupsInDlts);
+    }
+
     private static Optional<TopicSpec> find(String name) {
         return KafkaTopology.ALL_TOPICS.stream().filter(spec -> spec.name().equals(name)).findFirst();
     }

@@ -1,6 +1,7 @@
 package cl.campuslab.kafkaadmin.topology;
 
 import java.util.List;
+import java.util.Optional;
 import org.apache.kafka.common.config.TopicConfig;
 
 /**
@@ -38,7 +39,38 @@ public final class KafkaTopology {
             DLT_BOOKINGS_EVENTS_REPORT_SERVICE,
             DLT_AUDIT_TIMELINE_REPORT_TIMELINE_PROJECTION);
 
+    /** Consumer groups del sistema (kafka-admin-write.md §5.1). Literales duplicados a
+     * proposito: kafka-admin no puede importar clases de audit/report. */
+    public static final String GROUP_AUDIT_SERVICE = "audit-service";
+    public static final String GROUP_REPORT_SERVICE = "report-service";
+    public static final String GROUP_REPORT_TIMELINE_PROJECTION = "report-timeline-projection";
+
+    public static final List<String> MANAGED_CONSUMER_GROUPS =
+            List.of(GROUP_AUDIT_SERVICE, GROUP_REPORT_SERVICE, GROUP_REPORT_TIMELINE_PROJECTION);
+
     private KafkaTopology() {
+    }
+
+    public static boolean isManagedTopic(String name) {
+        return name != null && ALL_TOPICS.stream().anyMatch(spec -> spec.name().equals(name));
+    }
+
+    /** Kafka trata '.' y '_' como equivalentes en nombres de metricas, por lo que
+     * 'bookings_events' colisiona con 'bookings.events' aunque no sea el mismo nombre. */
+    public static Optional<String> collidingManagedTopic(String name) {
+        if (name == null) {
+            return Optional.empty();
+        }
+        String normalized = name.replace('.', '_');
+        return ALL_TOPICS.stream()
+                .map(TopicSpec::name)
+                .filter(managed -> !managed.equals(name))
+                .filter(managed -> managed.replace('.', '_').equals(normalized))
+                .findFirst();
+    }
+
+    public static boolean isManagedConsumerGroup(String groupId) {
+        return groupId != null && MANAGED_CONSUMER_GROUPS.contains(groupId);
     }
 
     public record TopicSpec(String name, int partitions, String cleanupPolicy, long retentionMs) {

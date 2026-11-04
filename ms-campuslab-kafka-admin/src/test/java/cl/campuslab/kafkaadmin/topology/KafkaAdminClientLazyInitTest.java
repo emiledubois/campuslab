@@ -5,6 +5,7 @@ import static org.awaitility.Awaitility.await;
 
 import cl.campuslab.kafkaadmin.kafka.ConsumerGroupInspectionService;
 import cl.campuslab.kafkaadmin.kafka.DltInspectionService;
+import cl.campuslab.kafkaadmin.kafka.KafkaAdminService;
 import cl.campuslab.kafkaadmin.kafka.KafkaReachabilityChecker;
 import cl.campuslab.kafkaadmin.kafka.TopologyInspectionService;
 import java.time.Duration;
@@ -48,6 +49,9 @@ import org.springframework.test.context.DynamicPropertySource;
  * {@code ConsumerGroupInspectionService} specifically; these four {@code getBean(...)} calls are
  * what actually prove every injection point, not just "the context" in the abstract, is genuinely
  * lazy.
+ *
+ * <p>kafka-admin-write.md AC31: {@link KafkaAdminService} es el quinto consumidor de
+ * {@code Admin} y se verifica de la misma forma.
  *
  * <p>{@code webEnvironment = RANDOM_PORT}, not {@code NONE}: kafka-admin's own
  * {@code SecurityConfig#securityFilterChain} takes an {@code HttpSecurity} parameter, which
@@ -93,10 +97,11 @@ class KafkaAdminClientLazyInitTest {
     }
 
     @Test
-    void contextRefresh_withUnresolvableBootstrapServers_allFourAdminConsumersConstructWithoutThrowing() {
+    void contextRefresh_withUnresolvableBootstrapServers_allFiveAdminConsumersConstructWithoutThrowing() {
         assertThat(applicationContext.getBean(TopologyInspectionService.class)).isNotNull();
         assertThat(applicationContext.getBean(KafkaReachabilityChecker.class)).isNotNull();
         assertThat(applicationContext.getBean(ConsumerGroupInspectionService.class)).isNotNull();
         assertThat(applicationContext.getBean(DltInspectionService.class)).isNotNull();
+        assertThat(applicationContext.getBean(KafkaAdminService.class)).isNotNull();
     }
 }
